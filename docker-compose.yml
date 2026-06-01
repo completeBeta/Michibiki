@@ -1,0 +1,27 @@
+services:
+  michibiki:
+    build: .
+    container_name: michibiki
+    restart: unless-stopped
+    environment:
+      - SUWAYOMI_URL=http://suwayomi:4567/api/graphql
+      - ANILIST_TOKEN=${ANILIST_TOKEN}
+      - POLL_INTERVAL_SECONDS=86400
+      - DRY_RUN=false
+    volumes:
+      - michibiki_data:/app/data
+    depends_on:
+      - suwayomi
+
+  suwayomi:
+    image: ghcr.io/suwayomi/suwayomi-server:latest
+    container_name: suwayomi
+    restart: unless-stopped
+    ports:
+      - "4567:4567"
+    volumes:
+      - suwayomi_data:/home/suwayomi/.local/share/Tachidesk
+
+volumes:
+  michibiki_data:
+  suwayomi_data:
