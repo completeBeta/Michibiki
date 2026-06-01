@@ -1,0 +1,108 @@
+"""AniList GraphQL client — pushes reading progress updates."""
+
+import math
+from enum import Enum
+
+import httpx
+
+ANILIST_API = "https://graphql.anilist.co"
+
+MUTATION = """
+mutation ($mediaId: Int, $progress: Int, $status: MediaListStatus) {
+  SaveMediaListEntry(mediaId: $mediaId, progress: $progress, status: $status) {
+    id
+    mediaId
+    progress
+    status
+  }
+}
+"""
+
+
+class MediaListStatus(str, Enum):
+    CURRENT = "CURRENT"
+    PLANNING = "PLANNING"
+    COMPLETED = "COMPLETED"
+    DROPPED = "DROPPED"
+    PAUSED = "PAUSED"
+    REPEATING = "REPEATING"
+
+
+class AniListClient:
+    """Async client for AniList's GraphQL API."""
+
+    def __init__(self, token: str):
+        self.token = token
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def map_status(suwayomi_status: str) -> MediaListStatus:
+        """Map Suwayomi manga status to AniList MediaListStatus."""
+        mapping: dict[str, MediaListStatus] = {
+            "ONGOING": MediaListStatus.CURRENT,
+            "COMPLETED": MediaListStatus.COMPLETED,
+            "PUBLISHING_FINISHED": MediaListStatus.CURRENT,
+        }
+        return mapping.get(suwayomi_status, MediaListStatus.CURRENT)
+
+    @staticmethod
+    def round_progress(chapter: float | None) -> int:
+        """Floor chapter number to int (42.5 → 42, None → 0)."""
+        if chapter is None:
+            return 0
+        return math.floor(chapter)
+
+    async def update_progress(
+        self,
+        media_id: int,
+        progress: float | None,
+        status: MediaListStatus,
+        dry_run: bool = False,
+    ) -> dict:
+        """Push progress update to AniList.
+
+        When dry_run=True, returns a preview dict without calling the API.
+        """
+        if dry_run:
+            return self._build_dry_run_result(media_id, progress, status)
+
+        payload = self._build_save_mutation(media_id, progress, status)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                ANILIST_API,
+                json=payload,
+                headers=self.headers,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    def _build_save_mutation(
+        self,
+        media_id: int,
+        progress: float | None,
+        status: MediaListStatus,
+    ) -> dict:
+        return {
+            "query": MUTATION,
+            "variables": {
+                "mediaId": media_id,
+                "progress": self.round_progress(progress),
+                "status": status.value,
+            },
+        }
+
+    def _build_dry_run_result(
+        self,
+        media_id: int,
+        progress: float | None,
+        status: MediaListStatus,
+    ) -> dict:
+        return {
+            "dry_run": True,
+            "mediaId": media_id,
+            "progress": self.round_progress(progress),
+            "status": status.value,
+        }
