@@ -11,6 +11,10 @@ query GetMangaProgress {
       id
       title
       status
+      lastReadChapter {
+        chapterNumber
+        lastReadAt
+      }
       trackRecords {
         nodes {
           id
@@ -19,16 +23,6 @@ query GetMangaProgress {
           lastChapterRead
           totalChapters
           tracker { name }
-        }
-      }
-      chapters(
-        condition: {isRead: true}
-        order: [{by: CHAPTER_NUMBER, byType: DESC}]
-        first: 1
-      ) {
-        nodes {
-          chapterNumber
-          lastReadAt
         }
       }
     }
@@ -71,8 +65,7 @@ class SuwayomiClient:
             if anilist_tr is None:
                 continue
 
-            chapters = node.get("chapters", {}).get("nodes", [])
-            highest_chapter = chapters[0] if chapters else None
+            last_read = node.get("lastReadChapter") or {}
 
             results.append(
                 MangaProgress(
@@ -81,16 +74,8 @@ class SuwayomiClient:
                     status=node.get("status", "UNKNOWN"),
                     anilist_media_id=int(anilist_tr["remoteId"]),
                     last_chapter_read=anilist_tr.get("lastChapterRead"),
-                    highest_read_chapter=(
-                        highest_chapter["chapterNumber"]
-                        if highest_chapter
-                        else None
-                    ),
-                    last_read_at=(
-                        highest_chapter["lastReadAt"]
-                        if highest_chapter
-                        else None
-                    ),
+                    highest_read_chapter=last_read.get("chapterNumber"),
+                    last_read_at=last_read.get("lastReadAt"),
                 )
             )
         return results

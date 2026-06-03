@@ -31,13 +31,9 @@ def test_parse_manga_with_anilist_tracker(client):
                                 }
                             ]
                         },
-                        "chapters": {
-                            "nodes": [
-                                {
-                                    "chapterNumber": 1105.0,
-                                    "lastReadAt": "1717200000000",
-                                }
-                            ]
+                        "lastReadChapter": {
+                            "chapterNumber": 1105.0,
+                            "lastReadAt": "1717200000000",
                         },
                     }
                 ]
@@ -75,7 +71,7 @@ def test_skips_manga_without_anilist_tracker(client):
                                 }
                             ]
                         },
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     }
                 ]
             }
@@ -96,7 +92,7 @@ def test_skips_manga_with_no_trackers(client):
                         "title": "No Trackers",
                         "status": "ONGOING",
                         "trackRecords": {"nodes": []},
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     }
                 ]
             }
@@ -126,7 +122,7 @@ def test_handles_no_chapters_read(client):
                                 }
                             ]
                         },
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     }
                 ]
             }
@@ -158,14 +154,14 @@ def test_multiple_manga_mixed(client):
                                 }
                             ]
                         },
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     },
                     {
                         "id": 11,
                         "title": "Untracked",
                         "status": "COMPLETED",
                         "trackRecords": {"nodes": []},
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     },
                     {
                         "id": 12,
@@ -181,7 +177,7 @@ def test_multiple_manga_mixed(client):
                                 }
                             ]
                         },
-                        "chapters": {"nodes": []},
+                        "lastReadChapter": None,
                     },
                 ]
             }
