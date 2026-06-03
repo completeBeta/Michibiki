@@ -5,6 +5,8 @@ import logging
 import sys
 import time
 
+import httpx
+
 from src.config import load_config
 from src.suwayomi import SuwayomiClient
 from src.anilist import AniListClient
@@ -51,7 +53,7 @@ async def run_sync(config):
 
 
 def main():
-    """Main entrypoint — runs sync once per POLL_INTERVAL_SECONDS."""
+    """Main entrypoint — waits for Suwayomi, then syncs on interval."""
     config = load_config()
 
     logger.info(
@@ -59,6 +61,8 @@ def main():
         config.poll_interval_seconds,
         config.dry_run,
     )
+
+    _wait_for_suwayomi(config.suwayomi_url)
 
     while True:
         try:
@@ -74,6 +78,25 @@ def main():
             "Sleeping for %d seconds...", config.poll_interval_seconds
         )
         time.sleep(config.poll_interval_seconds)
+
+
+def _wait_for_suwayomi(url: str, max_retries: int = 12, delay: int = 5):
+    """Ping Suwayomi until it responds or give up."""
+    ping_query = '{"query": "{ mangas(first:1) { nodes { id } } }"}'
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = httpx.post(url, content=ping_query, timeout=httpx.Timeout(10))
+            resp.raise_for_status()
+            if "data" in resp.json():
+                logger.info("Suwayomi ready (attempt %d)", attempt)
+                return
+        except Exception as e:
+            logger.warning(
+                "Suwayomi not ready (attempt %d/%d): %s",
+                attempt, max_retries, e,
+            )
+        time.sleep(delay)
+    logger.error("Suwayomi unreachable after %d attempts — proceeding anyway", max_retries)
 
 
 if __name__ == "__main__":
