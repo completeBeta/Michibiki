@@ -119,6 +119,16 @@ def _extract_manga_entry(manga) -> MangaEntry:
         if read_chapters:
             last_read = float(max(ch.chapterNumber for ch in read_chapters))
 
+    # Detect volume-based manga: Mihon stores volumes as volume/10000.
+    # If all chapters have sub-1 numbers, scale to actual volume count.
+    if last_read > 0 and last_read < 1.0:
+        # Confirm it's volume-based by checking sample chapters
+        sample = [ch.chapterNumber for ch in manga.chapters[:5]]
+        if all(0 < n < 1 for n in sample if n > 0):
+            original = last_read
+            last_read = round(last_read * 10000)
+            log.info("Volume-based manga '%s': scaled %.6f → %d", manga.title, original, last_read)
+
     return MangaEntry(
         title=manga.title,
         source_id=manga.source,
