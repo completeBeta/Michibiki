@@ -14,6 +14,9 @@ class Config:
     anilist_token: str
     poll_interval_seconds: int = 86400
     dry_run: bool = False
+    backup_dir: str = "/app/backups"
+    populate_suwayomi: bool = True
+    clear_suwayomi_first: bool = False
 
 
 def load_config() -> Config:
@@ -30,4 +33,7 @@ def load_config() -> Config:
         anilist_token=token,
         poll_interval_seconds=int(os.getenv("POLL_INTERVAL_SECONDS", "86400")),
         dry_run=os.getenv("DRY_RUN", "false").lower() == "true",
+        backup_dir=os.getenv("BACKUP_DIR", "/app/backups"),
+        populate_suwayomi=os.getenv("POPULATE_SUWAYOMI", "true").lower() == "true",
+        clear_suwayomi_first=os.getenv("CLEAR_SUWAYOMI_FIRST", "false").lower() == "true",
     )
