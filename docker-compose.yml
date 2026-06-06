@@ -7,9 +7,14 @@ services:
       - SUWAYOMI_URL=http://suwayomi:4567/api/graphql
       - ANILIST_TOKEN=${ANILIST_TOKEN}
       - POLL_INTERVAL_SECONDS=86400
-      - DRY_RUN=false
+      - DRY_RUN=${DRY_RUN:-true}
+      - BACKUP_DIR=/app/backups
+      - MODE=${MODE:-watch}           # "watch" for backup watcher, "poll" for Suwayomi→AniList poll
+      - POPULATE_SUWAYOMI=${POPULATE_SUWAYOMI:-true}
+      - CLEAR_SUWAYOMI_FIRST=${CLEAR_SUWAYOMI_FIRST:-false}
     volumes:
       - michibiki_data:/app/data
+      - ${BACKUP_HOST_DIR:-./backups}:/app/backups  # Syncthing drops backups here
     depends_on:
       - suwayomi
 
