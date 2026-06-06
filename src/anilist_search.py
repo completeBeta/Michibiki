@@ -1,10 +1,12 @@
 """AniList title search — find media IDs by manga title.
 
 Used when the backup has no tracker binding for a manga.
-Performs a fuzzy-ish search via AniList's GraphQL search endpoint.
+Queries AniList's GraphQL Page endpoint to get multiple results,
+then scores each candidate to pick the best match.
 """
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -14,23 +16,37 @@ log = logging.getLogger(__name__)
 ANILIST_API = "https://graphql.anilist.co"
 
 SEARCH_QUERY = """
-query ($search: String) {
-  Media(search: $search, type: MANGA, format_not_in: [NOVEL]) {
-    id
-    title {
-      romaji
-      english
-      native
+query ($search: String, $page: Int) {
+  Page(page: $page, perPage: 5) {
+    media(search: $search, type: MANGA, format_not_in: [NOVEL]) {
+      id
+      title {
+        romaji
+        english
+        native
+      }
+      format
+      status
+      volumes
+      chapters
+      startDate { year }
     }
-    format
-    status
-    startDate { year }
   }
 }
 """
 
 # Number of search results to evaluate for best match
 SEARCH_RESULT_LIMIT = 5
+
+# Minimum score to accept a match (0.0–1.0)
+MATCH_THRESHOLD = 0.50
+
+# Manual overrides for ambiguous titles that AniList search gets wrong.
+# Keys are lowercase-simplified titles; values are the correct AniList media IDs.
+# Add entries when the search consistently picks the wrong manga.
+TITLE_OVERRIDES: dict[str, int] = {
+    "gate": 71733,  # Gate: Where the JSDF Fought (28 vols) — not GATE (36977, 4 vols)
+}
 
 # Common subtitle patterns to strip for better search matching
 _SUBTITLE_PATTERNS = [
@@ -43,6 +59,75 @@ class AniListSearchError(Exception):
     """Raised when AniList search fails."""
 
 
+def _simplify(s: str) -> str:
+    """Lowercase, strip punctuation, normalize whitespace for comparison."""
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s)  # punctuation → space
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _score_match(query: str, candidate: dict[str, Any]) -> float:
+    """Score how well an AniList search result matches the search query.
+
+    Returns 0.0–1.0. Higher is better.
+    """
+    q = _simplify(query)
+    if not q:
+        return 0.0
+
+    # Collect all title variants from the candidate
+    titles = []
+    title_obj = candidate.get("title", {})
+    for key in ("romaji", "english", "native"):
+        val = title_obj.get(key)
+        if val:
+            titles.append(_simplify(val))
+
+    best = 0.0
+    for t in titles:
+        if not t:
+            continue
+
+        # Exact match (case-insensitive, after simplification)
+        if t == q:
+            score = 0.85
+        # Result title starts with query (e.g. "Gate" → "gate thus the jsdf fought there")
+        elif t.startswith(q + " "):
+            # Prefer longer/more specific titles that start with the query
+            # over bare exact matches on short titles
+            score = 0.90
+        # Query starts with result title (unlikely but handle it)
+        elif q.startswith(t + " "):
+            score = 0.80
+        # Result title contains query as a whole word or at boundaries
+        elif (" " + q + " ") in (" " + t + " "):
+            score = 0.70
+        # Substring match (fallback)
+        elif q in t or t in q:
+            score = 0.55
+        else:
+            # Word overlap score
+            q_words = set(q.split())
+            t_words = set(t.split())
+            if q_words and t_words:
+                overlap = len(q_words & t_words)
+                if overlap == len(q_words):
+                    # All query words appear in title
+                    score = 0.50 + (0.10 * min(overlap / len(t_words), 1))
+                elif overlap > 0:
+                    score = 0.30 * (overlap / len(q_words))
+                else:
+                    score = 0.0
+            else:
+                score = 0.0
+
+        if score > best:
+            best = score
+
+    return best
+
+
 async def search_anilist(
     title: str,
     token: str,
@@ -51,27 +136,40 @@ async def search_anilist(
 ) -> int | None:
     """Search AniList for a manga by title.
 
+    Queries multiple results and picks the best match via scoring.
     Returns the AniList media ID if a good match is found, None otherwise.
     """
+    # Check manual overrides first — some titles confuse AniList search
+    override_key = _simplify(title)
+    if override_key in TITLE_OVERRIDES:
+        override_id = TITLE_OVERRIDES[override_key]
+        log.info(
+            "AniList search: '%s' → ID %d [manual override]",
+            title, override_id,
+        )
+        return override_id
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
-    # Try exact search first, then cleaned title
-    search_terms = [title, _clean_title(title)]
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    search_terms = [t for t in search_terms if not (t in seen or seen.add(t))]  # type: ignore[func-returns-value]
+    # Try original title first, then cleaned version if no good match
+    cleaned = _clean_title(title)
+    search_terms = [title] if title == cleaned else [title, cleaned]
 
-    async def _do_search(client: httpx.AsyncClient, term: str) -> dict[str, Any]:
+    async def _do_page_search(
+        client: httpx.AsyncClient, term: str
+    ) -> list[dict[str, Any]]:
         payload = {
             "query": SEARCH_QUERY,
-            "variables": {"search": term},
+            "variables": {"search": term, "page": 1},
         }
         resp = await client.post(ANILIST_API, json=payload, headers=headers)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        page = data.get("data", {}).get("Page", {})
+        return page.get("media", []) or []
 
     own_client = client is None
     if own_client:
@@ -82,18 +180,53 @@ async def search_anilist(
             if not term.strip():
                 continue
             try:
-                data = await _do_search(client, term)
-                media = data.get("data", {}).get("Media")
-                if media and isinstance(media, dict):
-                    media_id = media.get("id")
-                    if media_id:
-                        log.info(
-                            "AniList search: '%s' → ID %d (%s)",
-                            term,
-                            media_id,
-                            media.get("title", {}).get("romaji", "?"),
-                        )
-                        return int(media_id)
+                results = await _do_page_search(client, term)
+
+                if not results:
+                    log.info(
+                        "AniList search: no results for '%s'", term
+                    )
+                    continue
+
+                # Score all results against the ORIGINAL title (not cleaned)
+                scored = [
+                    (candidate, _score_match(title, candidate))
+                    for candidate in results
+                ]
+                scored.sort(key=lambda x: x[1], reverse=True)
+
+                # Log all candidates for debugging
+                for candidate, score in scored:
+                    romaji = candidate.get("title", {}).get("romaji", "?")
+                    log.debug(
+                        "  Candidate: ID %d (%s) — score %.2f",
+                        candidate["id"],
+                        romaji,
+                        score,
+                    )
+
+                best_candidate, best_score = scored[0]
+
+                if best_score >= MATCH_THRESHOLD:
+                    best_id = best_candidate["id"]
+                    romaji = best_candidate.get("title", {}).get("romaji", "?")
+                    log.info(
+                        "AniList search: '%s' → ID %d (%s) [score: %.2f]",
+                        title,
+                        best_id,
+                        romaji,
+                        best_score,
+                    )
+                    return int(best_id)
+
+                log.info(
+                    "AniList search: no good match for '%s' "
+                    "(best: ID %d, score %.2f < %.2f)",
+                    title,
+                    best_candidate["id"],
+                    best_score,
+                    MATCH_THRESHOLD,
+                )
             except Exception as e:
                 log.warning("AniList search failed for '%s': %s", term, e)
 
@@ -109,8 +242,6 @@ def _clean_title(title: str) -> str:
 
     Strips common subtitle/suffix patterns that confuse AniList search.
     """
-    import re
-
     # Remove content in parentheses at the end
     cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", title)
 
