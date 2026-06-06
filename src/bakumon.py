@@ -170,6 +170,11 @@ def watch_for_backups(
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
+            # Only process the single most recent backup — older ones are redundant
+            unprocessed = [f for f in files if f.name not in processed]
+            if unprocessed:
+                files = [unprocessed[0]]  # just the newest
+
             for f in files:
                 fname = f.name
                 if fname not in processed:
@@ -185,7 +190,9 @@ def watch_for_backups(
                             )
                         )
                         processed.add(fname)
-                        # Clear suwayomi only applies to the first run
+                        # Mark all older files as processed too — no need to revisit them
+                        for older in unprocessed[1:]:
+                            processed.add(older.name)
                         clear_suwayomi_first = False
                     except Exception as e:
                         log.error("Sync failed for %s: %s", fname, e)
