@@ -23,7 +23,7 @@ Mihon (phone) ──Syncthing──▶ backup files (.tachibk)
 - **Backup parser** extracts manga titles, chapter progress, and existing AniList tracker bindings from Mihon's protobuf backup files
 - **AniList search** fuzzy-matches unbound manga to AniList media IDs
 - **AniList sync** pushes reading progress via `SaveMediaListEntry` mutation
-- **Suwayomi population** (optional) searches extensions, adds manga to library, and binds trackers — enabling the full Suwayomi→AniList pipeline
+- **Suwayomi population** (experimental) searches extensions, adds manga to library, and binds trackers. **Currently WIP** — the population strategy and data movement pipeline will be standardized in a future update. For now, set `POPULATE_SUWAYOMI=false` and use only the AniList sync.
 
 ## Prerequisites
 
@@ -36,7 +36,9 @@ Mihon (phone) ──Syncthing──▶ backup files (.tachibk)
    ```
    Copy the token from the redirect URL.
 
-### Suwayomi Extensions (for library population)
+### Suwayomi Extensions (for library population — WIP)
+
+> ⚠️ Suwayomi population is experimental and not yet production-ready. This section is for future reference.
 
 If using `POPULATE_SUWAYOMI=true`, install source extensions in Suwayomi's WebUI:
 
@@ -82,7 +84,7 @@ docker compose up -d
 | `DRY_RUN` | `false` | Log updates without pushing to AniList |
 | `MODE` | `watch` | `watch` for backup watcher, `poll` for Suwayomi→AniList |
 | `BACKUP_DIR` | `/app/backups` | Directory watched for `.tachibk` files |
-| `POPULATE_SUWAYOMI` | `true` | Add manga to Suwayomi + bind AniList trackers |
+| `POPULATE_SUWAYOMI` | `false` | (WIP) Add manga to Suwayomi + bind AniList trackers |
 | `CLEAR_SUWAYOMI_FIRST` | `false` | Remove all manga from Suwayomi before populating |
 
 ## Volume Mounts
