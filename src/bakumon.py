@@ -75,14 +75,25 @@ async def sync_from_backup(
             # AniList rate limit: 90 req/min. 1s delay = 60 req/min — safe.
             await asyncio.sleep(1)
 
-    # 2.5 Deduplicate by AniList media ID — keep entry with highest progress
-    best: dict[int, tuple] = {}
+    # 2.5 Deduplicate by AniList media ID.
+    # When duplicates exist (multiple backup entries → same AniList ID),
+    # warn and skip both — require manual resolution.
+    seen: dict[int, list] = {}
     for entry in entries:
         if entry.anilist_media_id:
-            mid = entry.anilist_media_id
-            if mid not in best or entry.last_chapter_read > best[mid][1].last_chapter_read:
-                best[mid] = (entry.title, entry)
-    entries = [e for _, e in best.values()]
+            seen.setdefault(entry.anilist_media_id, []).append(entry)
+    deduped = []
+    for mid, group in seen.items():
+        if len(group) > 1:
+            titles = [f"'{e.title}' (ch {e.last_chapter_read})" for e in group]
+            log.warning(
+                "Duplicate AniList ID %d: %s — skipping all. "
+                "Remove the duplicate from Mihon or manually set progress on AniList.",
+                mid, ", ".join(titles),
+            )
+            continue
+        deduped.append(group[0])
+    entries = deduped
     log.info("After dedup: %d unique AniList entries", len(entries))
 
     # 3. Sync to AniList (skip entries with no progress to avoid destructive 0-pushes)
