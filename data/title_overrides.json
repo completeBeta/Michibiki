@@ -1,0 +1,4 @@
+{
+    "_comment": "Map backup titles to AniList media IDs. Keys are case-insensitive. Edit on host, restart container — no rebuild needed.",
+    "gate": 71733
+}

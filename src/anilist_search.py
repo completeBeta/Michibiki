@@ -7,6 +7,7 @@ then scores each candidate to pick the best match.
 
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -42,11 +43,34 @@ SEARCH_RESULT_LIMIT = 5
 MATCH_THRESHOLD = 0.50
 
 # Manual overrides for ambiguous titles that AniList search gets wrong.
-# Keys are lowercase-simplified titles; values are the correct AniList media IDs.
-# Add entries when the search consistently picks the wrong manga.
-TITLE_OVERRIDES: dict[str, int] = {
+# Loaded from data/title_overrides.json (volume-mounted, editable without rebuild).
+# Falls back to hardcoded defaults if the file is missing.
+# Format: {"simplified_title": anilist_media_id, ...}
+_TITLE_OVERRIDES_PATH = Path(__file__).parent.parent / "data" / "title_overrides.json"
+
+_DEFAULT_OVERRIDES: dict[str, int] = {
     "gate": 71733,  # Gate: Where the JSDF Fought (28 vols) — not GATE (36977, 4 vols)
 }
+
+def _load_overrides() -> dict[str, int]:
+    """Load title overrides from JSON file, falling back to defaults."""
+    try:
+        if _TITLE_OVERRIDES_PATH.exists():
+            import json
+            with open(_TITLE_OVERRIDES_PATH) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                overrides = {}
+                for k, v in data.items():
+                    # Skip comment/non-numeric entries
+                    if isinstance(v, (int, float)):
+                        overrides[str(k).lower()] = int(v)
+                return overrides
+    except Exception as e:
+        log.warning("Failed to load title overrides from %s: %s", _TITLE_OVERRIDES_PATH, e)
+    return dict(_DEFAULT_OVERRIDES)
+
+TITLE_OVERRIDES: dict[str, int] = _load_overrides()
 
 # Common subtitle patterns to strip for better search matching
 _SUBTITLE_PATTERNS = [
