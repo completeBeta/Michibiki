@@ -76,8 +76,8 @@ async def sync_from_backup(
             await asyncio.sleep(1)
 
     # 2.5 Deduplicate by AniList media ID.
-    # When duplicates exist (multiple backup entries → same AniList ID),
-    # warn and skip both — require manual resolution.
+    # When duplicates exist: keep the entry with the most chapters
+    # (the main series, not a spinoff/viewpoint). Warn if ambiguous.
     seen: dict[int, list] = {}
     for entry in entries:
         if entry.anilist_media_id:
@@ -85,14 +85,19 @@ async def sync_from_backup(
     deduped = []
     for mid, group in seen.items():
         if len(group) > 1:
-            titles = [f"'{e.title}' (ch {e.last_chapter_read})" for e in group]
+            # Keep the entry with the most total chapters — that's the main series
+            group.sort(key=lambda e: e.total_chapters, reverse=True)
+            best = group[0]
+            rest = group[1:]
+            titles = [f"'{e.title}' ({e.total_chapters}ch, progress={e.last_chapter_read})" for e in group]
             log.warning(
-                "Duplicate AniList ID %d: %s — skipping all. "
-                "Remove the duplicate from Mihon or manually set progress on AniList.",
-                mid, ", ".join(titles),
+                "Duplicate AniList ID %d: keeping '%s' (%dch) over %s",
+                mid, best.title, best.total_chapters,
+                ", ".join(f"'{t.title}'" for t in rest),
             )
-            continue
-        deduped.append(group[0])
+            deduped.append(best)
+        else:
+            deduped.append(group[0])
     entries = deduped
     log.info("After dedup: %d unique AniList entries", len(entries))
 
