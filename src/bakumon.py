@@ -72,6 +72,8 @@ async def sync_from_backup(
                 entry.anilist_media_id = media_id
                 searched += 1
                 log.info("AniList match: '%s' → ID %d", entry.title, media_id)
+            # AniList rate limit: 90 req/min. 1s delay = 60 req/min — safe.
+            await asyncio.sleep(1)
 
     # 3. Sync to AniList
     synced = 0
