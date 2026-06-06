@@ -13,6 +13,19 @@ mutation ($mediaId: Int, $progress: Int, $status: MediaListStatus) {
     id
     mediaId
     progress
+    progressVolumes
+    status
+  }
+}
+"""
+
+MUTATION_VOLUMES = """
+mutation ($mediaId: Int, $progressVolumes: Int, $status: MediaListStatus) {
+  SaveMediaListEntry(mediaId: $mediaId, progressVolumes: $progressVolumes, status: $status) {
+    id
+    mediaId
+    progress
+    progressVolumes
     status
   }
 }
@@ -61,15 +74,17 @@ class AniListClient:
         progress: float | None,
         status: MediaListStatus,
         dry_run: bool = False,
+        is_volume_based: bool = False,
     ) -> dict:
         """Push progress update to AniList.
 
+        When is_volume_based=True, sends progressVolumes instead of progress.
         When dry_run=True, returns a preview dict without calling the API.
         """
         if dry_run:
-            return self._build_dry_run_result(media_id, progress, status)
+            return self._build_dry_run_result(media_id, progress, status, is_volume_based)
 
-        payload = self._build_save_mutation(media_id, progress, status)
+        payload = self._build_save_mutation(media_id, progress, status, is_volume_based)
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 ANILIST_API,
@@ -84,7 +99,17 @@ class AniListClient:
         media_id: int,
         progress: float | None,
         status: MediaListStatus,
+        is_volume_based: bool = False,
     ) -> dict:
+        if is_volume_based:
+            return {
+                "query": MUTATION_VOLUMES,
+                "variables": {
+                    "mediaId": media_id,
+                    "progressVolumes": self.round_progress(progress),
+                    "status": status.value,
+                },
+            }
         return {
             "query": MUTATION,
             "variables": {
@@ -99,10 +124,15 @@ class AniListClient:
         media_id: int,
         progress: float | None,
         status: MediaListStatus,
+        is_volume_based: bool = False,
     ) -> dict:
-        return {
+        result = {
             "dry_run": True,
             "mediaId": media_id,
-            "progress": self.round_progress(progress),
             "status": status.value,
         }
+        if is_volume_based:
+            result["progressVolumes"] = self.round_progress(progress)
+        else:
+            result["progress"] = self.round_progress(progress)
+        return result

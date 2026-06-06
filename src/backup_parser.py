@@ -36,9 +36,10 @@ class MangaEntry:
     source_id: int
     source_url: str
     anilist_media_id: int | None  # from tracker binding (syncId=2)
-    last_chapter_read: float  # highest read chapter number
+    last_chapter_read: float  # highest read chapter/volume number
     total_chapters: int  # total chapters in library
     status: str  # ONGOING, COMPLETED, etc.
+    is_volume_based: bool = False  # True if last_chapter_read represents volumes, not chapters
 
 
 @dataclass
@@ -121,12 +122,14 @@ def _extract_manga_entry(manga) -> MangaEntry:
 
     # Detect volume-based manga: Mihon stores volumes as volume/10000.
     # If all chapters have sub-1 numbers, scale to actual volume count.
+    volume_based = False
     if last_read > 0 and last_read < 1.0:
         # Confirm it's volume-based by checking sample chapters
         sample = [ch.chapterNumber for ch in manga.chapters[:5]]
         if all(0 < n < 1 for n in sample if n > 0):
             original = last_read
             last_read = round(last_read * 10000)
+            volume_based = True
             log.info("Volume-based manga '%s': scaled %.6f → %d", manga.title, original, last_read)
 
     return MangaEntry(
@@ -137,6 +140,7 @@ def _extract_manga_entry(manga) -> MangaEntry:
         last_chapter_read=last_read,
         total_chapters=len(manga.chapters),
         status=_map_status(manga.status),
+        is_volume_based=volume_based,
     )
 
 
