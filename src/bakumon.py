@@ -112,11 +112,13 @@ async def sync_from_backup(
             continue
 
         if dry_run:
+            units = "vol" if entry.is_volume_based else "ch"
             log.info(
-                "[DRY RUN] Would sync '%s': mediaId=%d, progress=%d",
+                "[DRY RUN] Would sync '%s': mediaId=%d, progress=%d %s",
                 entry.title,
                 entry.anilist_media_id,
                 anilist.round_progress(entry.last_chapter_read),
+                units,
             )
         else:
             try:
@@ -125,6 +127,7 @@ async def sync_from_backup(
                     media_id=entry.anilist_media_id,
                     progress=entry.last_chapter_read,
                     status=status,
+                    is_volume_based=entry.is_volume_based,
                 )
                 synced += 1
             except Exception as e:
