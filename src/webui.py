@@ -19,8 +19,7 @@ import httpx
 from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 
 from src.download import (
     _find_manga,
@@ -50,7 +49,13 @@ _download_tasks: dict[str, DownloadTask] = {}
 
 # ── App setup ───────────────────────────────────────────────────────
 
-templates = Jinja2Templates(directory="/app/templates")
+env = Environment(loader=FileSystemLoader("/app/templates"))
+
+
+def _render(name: str, context: dict) -> HTMLResponse:
+    """Render a Jinja2 template to an HTML response."""
+    template = env.get_template(name)
+    return HTMLResponse(template.render(**context))
 
 
 @asynccontextmanager
@@ -252,7 +257,7 @@ async def library_view(request: Request):
         manga_list = []
 
     plain_tasks = [_task_to_dict(t) for t in _download_tasks.values()]
-    return templates.TemplateResponse(
+    return _render(
         "index.html",
         {
             "request": request,
@@ -275,7 +280,7 @@ async def manga_detail(request: Request, manga_id: int):
     if not manga:
         return HTMLResponse("<p class='error'>Manga not found</p>", status_code=404)
 
-    return templates.TemplateResponse(
+    return _render(
         "manga_detail.html",
         {"request": request, "manga": manga},
     )
@@ -333,7 +338,7 @@ async def tasks_view(request: Request):
     """HTMX partial — refresh task list."""
     tasks = sorted(_download_tasks.values(), key=lambda t: t.started_at, reverse=True)
     plain_tasks = [_task_to_dict(t) for t in tasks]
-    return templates.TemplateResponse(
+    return _render(
         "tasks.html",
         {"request": request, "tasks": plain_tasks},
     )
