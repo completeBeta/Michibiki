@@ -195,6 +195,8 @@ async def _run_download(
         task.status = "running"
         async with httpx.AsyncClient(timeout=30) as client:
             chapters = await _get_chapters(client, manga_id)
+            # Filter already-downloaded chapters
+            chapters = [c for c in chapters if not c.get("isDownloaded")]
             task.total_chapters = len(chapters)
 
             # Filter
@@ -242,7 +244,7 @@ async def _run_download(
                         if task.status == "cancelled":
                             return
                         done, failed = await governor.wait_for_batch(
-                            batch, timeout_per_chapter=delay
+                            batch, timeout_per_chapter=max(delay, len(batch) * 60)
                         )
             finally:
                 await governor.disconnect()

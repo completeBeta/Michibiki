@@ -84,7 +84,7 @@ async def _get_chapters(
     query($id: Int!) {
       manga(id: $id) {
         chapters {
-          nodes { id name chapterNumber }
+          nodes { id name chapterNumber isDownloaded }
         }
       }
     }
@@ -158,6 +158,8 @@ async def download(
 
         # Get chapters
         chapters = await _get_chapters(client, found_id)
+        # Filter out already-downloaded chapters
+        chapters = [c for c in chapters if not c.get("isDownloaded")]
         total = len(chapters)
         print(f"Total chapters: {total}")
 
@@ -235,7 +237,7 @@ async def download(
                     if i < len(batches):
                         print(f"  Watching for completion...")
                         done, failed = await governor.wait_for_batch(
-                            batch, timeout_per_chapter=delay
+                            batch, timeout_per_chapter=max(delay, len(batch) * 60)
                         )
                         print(f"  Batch complete: {len(done)} done, {len(failed)} failed")
                         print()
