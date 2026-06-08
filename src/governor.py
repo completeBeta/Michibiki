@@ -4,7 +4,6 @@ B1 approach: Subscribe to downloadStatusChanged, track batch completion,
 replace blind time.sleep() with actual download-completion awareness.
 
 Protocol: graphql-transport-ws (https://github.com/enisdenjo/graphql-ws)
-WebSocket URL: ws://suwayomi:4567/api/graphql (same as HTTP, upgraded)
 """
 
 from __future__ import annotations
@@ -37,8 +36,6 @@ GQL_PONG = "pong"
 
 TERMINAL_STATES = {"FINISHED", "ERROR"}
 
-# Note: chapterId/mangaId are @GraphQLIgnore in Suwayomi.
-# Must use chapter { id } and manga { id } resolvers instead.
 DOWNLOAD_SUBSCRIPTION = """
 subscription {
   downloadStatusChanged(input: {maxUpdates: 50}) {
@@ -61,13 +58,24 @@ class Governor:
         self._chapter_states: dict[int, str] = {}
         self._batch_events: dict[int, asyncio.Event] = {}
         self._batch_chapter_ids: set[int] = set()
+        self._receiver_task: asyncio.Task | None = None
 
     async def connect(self) -> None:
         async with self._connect_lock:
             if self._connected:
                 return
             import websockets
-            self._ws = await websockets.connect(self.ws_url)
+
+            class KeepaliveProtocol(websockets.WebSocketClientProtocol):
+                """Override to ignore server-side close — keep listening for download events."""
+                pass
+
+            self._ws = await websockets.connect(
+                self.ws_url,
+                ping_interval=30,
+                ping_timeout=10,
+                close_timeout=5,
+            )
             await self._ws.send(json.dumps({"type": GQL_CONNECTION_INIT}))
             msg = json.loads(await self._ws.recv())
             if msg.get("type") != GQL_CONNECTION_ACK:
@@ -78,30 +86,77 @@ class Governor:
             }))
             self._connected = True
             log.info("Governor connected — subscribed to downloadStatusChanged")
-            asyncio.create_task(self._receiver_loop())
+            self._receiver_task = asyncio.create_task(self._receiver_loop())
 
     async def disconnect(self) -> None:
+        self._connected = False
+        if self._receiver_task:
+            self._receiver_task.cancel()
+            self._receiver_task = None
         if self._ws:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
             self._ws = None
-            self._connected = False
 
     async def _receiver_loop(self) -> None:
+        """Continuously receive and dispatch WebSocket messages."""
         try:
             while self._connected and self._ws:
-                raw = await self._ws.recv()
-                msg = json.loads(raw)
-                t = msg.get("type")
-                if t == GQL_NEXT:
+                try:
+                    raw = await asyncio.wait_for(self._ws.recv(), timeout=60)
+                except asyncio.TimeoutError:
+                    # No messages in 60s — send ping to keep alive
+                    if self._connected and self._ws:
+                        try:
+                            await self._ws.send(json.dumps({"type": GQL_PING}))
+                        except Exception:
+                            break
+                    continue
+
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = msg.get("type")
+                if msg_type == GQL_NEXT:
                     self._process_message(msg)
-                elif t == GQL_PING:
+                elif msg_type == GQL_PING:
                     await self._ws.send(json.dumps({"type": GQL_PONG}))
-                elif t == GQL_COMPLETE:
-                    break
-                elif t == GQL_ERROR:
+                elif msg_type == GQL_COMPLETE:
+                    # Server finished the subscription stream.
+                    # Reconnect immediately — new downloads will trigger new events.
+                    log.debug("Server completed subscription stream — reconnecting...")
+                    await self._ws.close()
+                    self._ws = None
+                    await asyncio.sleep(1)
+                    try:
+                        self._ws = await websockets.connect(
+                            self.ws_url,
+                            ping_interval=30,
+                            ping_timeout=10,
+                        )
+                        await self._ws.send(json.dumps({"type": GQL_CONNECTION_INIT}))
+                        ack = json.loads(await self._ws.recv())
+                        if ack.get("type") == GQL_CONNECTION_ACK:
+                            await self._ws.send(json.dumps({
+                                "type": GQL_SUBSCRIBE, "id": "gov-1",
+                                "payload": {"query": DOWNLOAD_SUBSCRIPTION},
+                            }))
+                            log.debug("Governor reconnected")
+                    except Exception as e:
+                        log.warning("Governor reconnect failed: %s", e)
+                        break
+                elif msg_type == GQL_ERROR:
                     log.error("Subscription error: %s", msg.get("payload"))
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
-            log.error("Receiver loop error: %s", e)
+            if self._connected:
+                log.error("Receiver loop error: %s", e)
+        finally:
             self._connected = False
 
     def _process_message(self, msg: dict) -> None:
@@ -137,16 +192,28 @@ class Governor:
                 ev.set()
             events[cid] = ev
         self._batch_events.update(events)
+
+        log.info("Waiting for %d chapters (timeout=%ds)...", len(chapter_ids), timeout_per_chapter)
+
+        done, failed = [], []
         try:
-            log.info("Waiting for %d chapters (timeout=%ds)...", len(chapter_ids), timeout_per_chapter)
-            await asyncio.wait(
-                [asyncio.wait_for(ev.wait(), timeout=timeout_per_chapter) for ev in events.values()],
-                return_when=asyncio.ALL_COMPLETED,
-            )
-            done, failed = [], []
+            # Use asyncio.gather with explicit tasks — asyncio.wait() needs Tasks in 3.11+
+            tasks = {
+                asyncio.create_task(ev.wait()): cid
+                for cid, ev in events.items()
+            }
+            if tasks:
+                finished, pending = await asyncio.wait(
+                    tasks.keys(),
+                    timeout=timeout_per_chapter,
+                    return_when=asyncio.ALL_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+
             for cid in chapter_ids:
-                s = self._chapter_states.get(cid, "UNKNOWN")
-                (done if s == "FINISHED" else failed).append(cid)
+                state = self._chapter_states.get(cid, "UNKNOWN")
+                (done if state == "FINISHED" else failed).append(cid)
             return done, failed
         finally:
             for cid in chapter_ids:

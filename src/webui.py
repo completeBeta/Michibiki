@@ -233,6 +233,7 @@ async def _run_download(
             task.total_chapters = len(chapter_ids)
             governor = Governor()
             try:
+                # Connect BEFORE queueing — governor must be alive when downloads start
                 await governor.connect()
                 for i, batch in enumerate(batches, 1):
                     await _queue_batch(client, batch)
