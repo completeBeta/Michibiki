@@ -2,6 +2,9 @@
 
 B1 approach: Subscribe to downloadStatusChanged, track batch completion,
 replace blind time.sleep() with actual download-completion awareness.
+
+Protocol: graphql-transport-ws (https://github.com/enisdenjo/graphql-ws)
+WebSocket URL: ws://suwayomi:4567/api/graphql (same as HTTP, upgraded)
 """
 
 from __future__ import annotations
@@ -34,12 +37,14 @@ GQL_PONG = "pong"
 
 TERMINAL_STATES = {"FINISHED", "ERROR"}
 
+# Note: chapterId/mangaId are @GraphQLIgnore in Suwayomi.
+# Must use chapter { id } and manga { id } resolvers instead.
 DOWNLOAD_SUBSCRIPTION = """
 subscription {
   downloadStatusChanged(input: {maxUpdates: 50}) {
     state
-    updates { type download { chapterId mangaId state progress } }
-    initial { chapterId mangaId state progress }
+    updates { type download { chapter { id } manga { id } state progress } }
+    initial { chapter { id } manga { id } state progress }
   }
 }
 """
@@ -104,12 +109,14 @@ class Governor:
         if not payload:
             return
         for item in payload.get("initial") or []:
-            cid = item.get("chapterId")
+            ch = item.get("chapter")
+            cid = ch.get("id") if ch else None
             if cid is not None:
                 self._chapter_states[cid] = item.get("state", "?")
         for update in payload.get("updates", []):
             d = update.get("download", {})
-            cid = d.get("chapterId")
+            ch = d.get("chapter")
+            cid = ch.get("id") if ch else None
             state = d.get("state")
             if cid is not None and state:
                 self._chapter_states[cid] = state
