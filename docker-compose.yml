@@ -27,3 +27,4 @@ services:
     volumes:
       - /opt/docker/suwayomi/data:/home/suwayomi/.local/share/Tachidesk
       - /opt/docker/suwayomi/config:/home/suwayomi/.local/share/Tachidesk-config
+      - ${SUWAYOMI_DOWNLOADS_DIR:-/opt/docker/suwayomi/data/downloads}:/home/suwayomi/.local/share/Tachidesk/downloads
