@@ -230,6 +230,18 @@ async def _run_download(
 
 # ── Routes ──────────────────────────────────────────────────────────
 
+def _task_to_dict(t: DownloadTask) -> dict:
+    return {
+        "task_id": t.task_id,
+        "manga_title": t.manga_title,
+        "total_chapters": t.total_chapters,
+        "queued": t.queued,
+        "status": t.status,
+        "dry_run": t.dry_run,
+        "error": t.error,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
     """Main page — library list with search."""
@@ -239,13 +251,14 @@ async def library_view(request: Request):
         log.error("Failed to fetch library: %s", e)
         manga_list = []
 
+    plain_tasks = [_task_to_dict(t) for t in _download_tasks.values()]
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "manga": manga_list,
             "library_empty": len(manga_list) == 0,
-            "tasks": list(_download_tasks.values()),
+            "tasks": plain_tasks,
         },
     )
 
@@ -319,9 +332,10 @@ async def start_download(
 async def tasks_view(request: Request):
     """HTMX partial — refresh task list."""
     tasks = sorted(_download_tasks.values(), key=lambda t: t.started_at, reverse=True)
+    plain_tasks = [_task_to_dict(t) for t in tasks]
     return templates.TemplateResponse(
         "tasks.html",
-        {"request": request, "tasks": tasks},
+        {"request": request, "tasks": plain_tasks},
     )
 
 
