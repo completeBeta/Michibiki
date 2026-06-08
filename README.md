@@ -69,7 +69,13 @@ Suwayomi but won't be linked to your AniList account.
 3. Authorize in the popup
 
 Verify it worked: the AniList tracker should show a green check or
-logged-in status. The populator binds trackers automatically after this.
+logged-in status.
+
+> **⚠️ Known limitation:** Suwayomi's automatic tracker binding via GraphQL
+> currently doesn't work due to a Suwayomi bug (`bindTrack` crashes without
+> a prior WebUI search). After setup, bind trackers manually per manga:
+> open the manga in Suwayomi WebUI → Tracking tab → search AniList →
+> select the matching entry. This is a one-time action per manga.
 
 ### 6. Configure and start
 
