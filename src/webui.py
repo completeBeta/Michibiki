@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -249,70 +250,114 @@ def _task_to_dict(t: DownloadTask) -> dict:
     }
 
 
-@app.post("/api/import")
-async def import_backup(request: Request):
-    """Upload a Mihon .tachibk backup and populate Suwayomi."""
-    import tempfile
-    from fastapi import UploadFile, File
-    
-    form = await request.form()
-    uploaded: UploadFile = form.get("backup_file")
-    
-    if not uploaded or not uploaded.filename:
+@app.post("/api/rescan")
+async def rescan_library(request: Request):
+    """Trigger a library rescan from the latest backup in the backup directory."""
+    import threading
+
+    if _scan_state["running"]:
         return HTMLResponse(
-            '<div class="toast error">No file selected</div>',
-            status_code=400
+            '<div class="toast warn">Scan already in progress...</div>',
+            status_code=409,
         )
-    
-    if not uploaded.filename.endswith(".tachibk"):
+
+    latest = _find_latest_backup()
+    if not latest:
         return HTMLResponse(
-            f'<div class="toast error">Expected .tachibk file, got {uploaded.filename}</div>',
-            status_code=400
+            '<div class="toast error">No .tachibk backup found. Place one in the backups directory.</div>',
+            status_code=404,
         )
-    
+
+    _scan_state.update({
+        "running": True, "status": "starting",
+        "added": 0, "bound": 0, "skipped": 0, "failed": 0, "total": 0,
+        "message": f"Scanning {os.path.basename(latest)}...",
+    })
+
+    thread = threading.Thread(
+        target=_run_populator_sync, args=(latest,), daemon=True
+    )
+    thread.start()
+
+    return HTMLResponse(
+        '<div class="scan-progress" hx-get="/api/status" '
+        'hx-trigger="every 2s" hx-swap="outerHTML">'
+        f'<p>⏳ Scanning {os.path.basename(latest)}...</p>'
+        '</div>'
+    )
+
+
+@app.get("/api/status")
+async def scan_status(request: Request):
+    """Get scan progress. HTMX polls this every 2s during a scan."""
+    if not _scan_state["running"] and _scan_state["status"] in ("done", "error"):
+        cls = "success" if _scan_state["status"] == "done" else "error"
+        return HTMLResponse(
+            f'<div class="toast {cls}">'
+            f'<p>{_scan_state["message"]}</p>'
+            f'<p>Refreshing page...</p>'
+            f'</div>'
+            f'<script>setTimeout(function(){{window.location.reload()}},1500);</script>'
+        )
+    elif _scan_state["running"]:
+        return HTMLResponse(
+            '<div class="scan-progress" hx-get="/api/status" '
+            'hx-trigger="every 2s" hx-swap="outerHTML">'
+            f'<p>⏳ {_scan_state["message"]}</p>'
+            '</div>'
+        )
+    return HTMLResponse('<div></div>')
+
+
+def _find_latest_backup() -> str | None:
+    """Find the most recent .tachibk in the backup directory."""
+    backup_dir = os.getenv("BACKUP_DIR", "/app/backups")
+    backups = sorted(
+        Path(backup_dir).glob("*.tachibk"),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+    if not backups:
+        return None
+    path = str(backups[0])
+    log.info("Latest backup: %s (%.1f KB)", path, os.path.getsize(path) / 1024)
+    return path
+
+
+def _run_populator_sync(backup_path: str) -> None:
+    """Run populator in a background thread. Updates _scan_state."""
+    _scan_state["message"] = "Parsing backup..."
     try:
-        # Save uploaded backup
-        backup_dir = "data"
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_path = os.path.join(backup_dir, uploaded.filename)
-        
-        contents = await uploaded.read()
-        with open(backup_path, "wb") as f:
-            f.write(contents)
-        
-        # Load config and run populator
+        from src.config import load_config
+        from src.sync import sync_from_backup
+
         config = load_config()
-        result = await sync_from_backup(
+        _scan_state["message"] = "Searching sources..."
+
+        result = asyncio.run(sync_from_backup(
             backup_path=backup_path,
             config=config,
             populate_suwayomi=True,
             clear_suwayomi_first=False,
             dry_run=False,
+        ))
+
+        _scan_state["status"] = "done"
+        _scan_state.update({
+            "added": result.added, "bound": result.bound,
+            "skipped": result.skipped, "failed": result.failed,
+        })
+        _scan_state["message"] = (
+            f"Done! {result.added} manga added, "
+            f"{result.skipped} skipped, {result.failed} failed"
         )
-        
-        # Build response
-        lines = []
-        if result.get("populated"):
-            lines.append(f'<div class="toast success">✅ Added {result["populated"]} manga to library</div>')
-        if result.get("synced"):
-            lines.append(f'<div class="toast info">📖 Synced progress for {result["synced"]} manga</div>')
-        if result.get("errors"):
-            lines.append(f'<div class="toast warn">⚠️ {len(result["errors"])} errors (check logs)</div>')
-        if not result.get("populated") and not result.get("synced"):
-            lines.append('<div class="toast info">No new manga to add</div>')
-        
-        # Return with HX-Refresh to reload library
-        return HTMLResponse(
-            "".join(lines),
-            headers={"HX-Refresh": "true"}
-        )
-    
     except Exception as e:
-        log.exception("Import failed")
-        return HTMLResponse(
-            f'<div class="toast error">Import failed: {e}</div>',
-            status_code=500
-        )
+        log.exception("Rescan failed")
+        _scan_state["status"] = "error"
+        _scan_state["message"] = f"Error: {e}"
+    finally:
+        _scan_state["running"] = False
+
+
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
