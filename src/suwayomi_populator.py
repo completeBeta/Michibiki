@@ -77,6 +77,18 @@ mutation FetchChapters($input: FetchChaptersInput!) {
 }
 """
 
+UPDATE_MANGA = """
+mutation UpdateManga($input: UpdateMangaInput!) {
+  updateManga(input: $input) {
+    clientMutationId
+    manga {
+      id
+      inLibrary
+    }
+  }
+}
+"""
+
 
 @dataclass
 class SourceInfo:
@@ -386,11 +398,30 @@ class SuwayomiPopulator:
         manga = fetch_result.get("manga") or {}
         manga_id = manga.get("id")
         if manga_id:
+            # Ensure manga is in library (fetchManga doesn't always set this)
+            await self._update_manga(manga_id, {"inLibrary": True})
             log.info("Added '%s' via %s → Suwayomi ID %d",
                      entry.title, source.name, manga_id)
             # Fetch chapter list (Suwayomi doesn't auto-fetch on add)
             await self._fetch_chapters(manga_id)
         return manga_id
+
+    async def _update_manga(self, manga_id: int, patch: dict) -> bool:
+        """Update manga fields (e.g., set inLibrary)."""
+        try:
+            data = await self._post(UPDATE_MANGA, {
+                "input": {
+                    "id": manga_id,
+                    "patch": patch,
+                }
+            })
+            if "errors" in data:
+                log.debug("updateManga error for %d: %s", manga_id, data["errors"])
+                return False
+            return True
+        except Exception as e:
+            log.debug("updateManga failed for %d: %s", manga_id, e)
+            return False
 
     async def _fetch_chapters(self, manga_id: int) -> bool:
         """Trigger chapter list fetch for a newly added manga.
