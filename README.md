@@ -86,6 +86,7 @@ docker compose up -d
 | `BACKUP_DIR` | `/app/backups` | Directory watched for `.tachibk` files |
 | `POPULATE_SUWAYOMI` | `false` | (WIP) Add manga to Suwayomi + bind AniList trackers |
 | `CLEAR_SUWAYOMI_FIRST` | `false` | Remove all manga from Suwayomi before populating |
+| `SUWAYOMI_DOWNLOADS_DIR` | *(auto)* | Where Suwayomi writes downloaded CBZ files. Defaults inside Suwayomi's data volume. Set to any host path (local folder, CIFS/NFS mount) to redirect downloads — e.g. `/mnt/nas/manga` |
 
 ## Volume Mounts
 
@@ -94,6 +95,32 @@ docker compose up -d
 | `/opt/docker/michibiki/data` | `/app/data` | SQLite state store |
 | `/home/syncthing/data/mihon-backups` | `/app/backups` | Mihon `.tachibk` files from Syncthing |
 | `/opt/docker/suwayomi/data` | `/home/suwayomi/.local/share/Tachidesk` | Suwayomi library + extensions |
+| `$SUWAYOMI_DOWNLOADS_DIR` | `/home/suwayomi/.local/share/Tachidesk/downloads` | CBZ chapter downloads (overlays parent mount). Set in `.env` — empty = default path inside data volume |
+
+### Download storage
+
+By default, Suwayomi stores downloaded CBZ files inside its data volume. To redirect downloads to a different location (local folder, network mount, etc.), set `SUWAYOMI_DOWNLOADS_DIR` in `.env`:
+
+```env
+# Write downloads to a local folder
+SUWAYOMI_DOWNLOADS_DIR=/srv/manga
+
+# Or a network mount
+SUWAYOMI_DOWNLOADS_DIR=/mnt/nas/manga
+```
+
+The path must exist on the host before running `docker compose up`. Docker overlays the more specific `/downloads` bind mount on top of the parent `/Tachidesk` mount — Suwayomi's config and database stay in the data volume, only downloads are redirected.
+
+### Title overrides
+
+Some manga titles confuse AniList's search ranking — popular series often match spinoffs instead of the main series. Edit `data/title_overrides.json` to force the correct AniList media ID. Keys are lowercase, case-insensitive. Restart the container after editing (no rebuild needed):
+
+```json
+{
+    "_comment": "Map backup titles to AniList media IDs.",
+    "classroom of the elite": 96798
+}
+```
 
 ## Development
 
