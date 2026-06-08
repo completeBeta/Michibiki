@@ -180,7 +180,13 @@ async def _run_download(
     delay: int = 180,
     limit: int | None = None,
 ):
-    """Run a download task in the background, updating _download_tasks."""
+    """Run a download task in the background, updating _download_tasks.
+    
+    Uses the Governor (WebSocket subscription) to track real download 
+    completion instead of blind sleep between batches.
+    """
+    from src.governor import Governor
+
     task = _download_tasks.get(task_id)
     if not task:
         return
@@ -217,7 +223,7 @@ async def _run_download(
                 task.status = "done"
                 return
 
-            # Queue in batches
+            # Queue in batches with real-time governor tracking
             chapter_ids = [c["id"] for c in chapters]
             batches = [
                 chapter_ids[i : i + batch_size]
@@ -225,15 +231,20 @@ async def _run_download(
             ]
 
             task.total_chapters = len(chapter_ids)
-            for i, batch in enumerate(batches, 1):
-                await _queue_batch(client, batch)
-                task.queued += len(batch)
-                if i < len(batches):
-                    # Non-blocking sleep — yield to other tasks
-                    for _ in range(delay):
+            governor = Governor()
+            try:
+                await governor.connect()
+                for i, batch in enumerate(batches, 1):
+                    await _queue_batch(client, batch)
+                    task.queued += len(batch)
+                    if i < len(batches):
                         if task.status == "cancelled":
                             return
-                        await asyncio.sleep(1)
+                        done, failed = await governor.wait_for_batch(
+                            batch, timeout_per_chapter=delay
+                        )
+            finally:
+                await governor.disconnect()
 
             task.status = "done"
 

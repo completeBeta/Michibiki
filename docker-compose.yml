@@ -7,16 +7,19 @@ services:
       - "${WEBUI_PORT:-5001}:5001"
     environment:
       - SUWAYOMI_URL=http://suwayomi:4567/api/graphql
-      - ANILIST_TOKEN=${ANILIST_TOKEN}
+      - SUWAYOMI_WS_URL=ws://suwayomi:4567/api/graphql
+      - ANILIST_TOKEN=***
       - POLL_INTERVAL_SECONDS=86400
       - DRY_RUN=${DRY_RUN:-true}
       - BACKUP_DIR=/app/backups
+      - DOWNLOADS_DIR=/downloads
       - MODE=watch
       - POPULATE_SUWAYOMI=true
-      - CLEAR_SUWAYOMI_FIRST=false   # let it populate fresh, no old data to clear
+      - CLEAR_SUWAYOMI_FIRST=false
     volumes:
       - ${MICHIBIKI_DATA_DIR:?set MICHIBIKI_DATA_DIR in .env (see .env.example)}:/app/data
       - ${BACKUP_HOST_DIR:?set BACKUP_HOST_DIR in .env (see .env.example)}:/app/backups
+      - ${SUWAYOMI_DOWNLOADS_DIR:?set SUWAYOMI_DOWNLOADS_DIR in .env (see .env.example)}:/downloads
     depends_on:
       - suwayomi
 
