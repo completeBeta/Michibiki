@@ -297,15 +297,16 @@
   <h1>📚 Michibiki</h1>
 
   {% if library_empty %}
-        <div class="empty-state">
+            <div class="toolbar" style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
+      <button class="btn-rescan" hx-post="/api/rescan" hx-target="#scan-status" hx-swap="innerHTML">Rescan Library</button>
+      <button class="btn-clear" hx-post="/api/clear" hx-target="#scan-status" hx-swap="innerHTML" 
+              hx-confirm="Remove ALL manga from library?" style="background: var(--red);">Clear Library</button>
+      <div id="scan-status"></div>
+    </div>
+    <div class="empty-state">
       <p><strong>Library is empty</strong></p>
       <p>Click below to populate from your Mihon backup:</p>
-      <button
-        class="btn-rescan"
-        hx-post="/api/rescan"
-        hx-target="#scan-status"
-        hx-swap="innerHTML"
-      >Rescan Library</button>
+      
       <div id="scan-status" style="margin-top: 1rem;"></div>
     </div>
   {% else %}

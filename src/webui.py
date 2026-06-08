@@ -386,6 +386,34 @@ async def library_view(request: Request):
     )
 
 
+
+@app.post("/api/clear")
+async def clear_library(request: Request):
+    """Remove all manga from Suwayomi library."""
+    try:
+        data = await _graphql("""
+        query {
+          mangas(condition: { inLibrary: true }) { nodes { id } }
+        }
+        """)
+        nodes = data.get("data", {}).get("mangas", {}).get("nodes", [])
+        count = len(nodes)
+        for n in nodes:
+            await _graphql("""
+            mutation RemoveFromLibrary($input: UpdateMangaInput!) {
+              updateManga(input: $input) { clientMutationId }
+            }
+            """, {"input": {"id": n["id"], "patch": {"inLibrary": False}}})
+        log.info("Cleared %d manga from library", count)
+        return HTMLResponse(
+            f'<div class="toast success"><p>Cleared {count} manga. Refreshing...</p></div>'
+            '<script>setTimeout(function(){window.location.reload()},1500);</script>'
+        )
+    except Exception as e:
+        log.exception("Clear failed")
+        return HTMLResponse(f'<div class="toast error"><p>Error: {e}</p></div>', status_code=500)
+
+
 @app.get("/manga/{manga_id}", response_class=HTMLResponse)
 async def manga_detail(request: Request, manga_id: int):
     """Manga detail — chapters, download status, controls."""
