@@ -333,11 +333,12 @@ def _run_populator_sync(backup_path: str) -> None:
     """Run populator in a background thread. Updates _scan_state."""
     _scan_state["message"] = "Parsing backup..."
     try:
-        from src.backup_parser import parse_protobuf_backup
+        from src.backup_parser import parse_backup
         from src.suwayomi_populator import SuwayomiPopulator
 
         # Parse backup entries
-        entries = parse_protobuf_backup(backup_path)
+        result = parse_backup(backup_path)
+        entries = result.entries
         _scan_state["total"] = len(entries)
         _scan_state["message"] = f"Found {len(entries)} entries, searching sources..."
 
