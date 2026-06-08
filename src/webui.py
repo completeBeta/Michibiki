@@ -333,19 +333,17 @@ def _run_populator_sync(backup_path: str) -> None:
     """Run populator in a background thread. Updates _scan_state."""
     _scan_state["message"] = "Parsing backup..."
     try:
-        from src.config import load_config
-        from src.sync import sync_from_backup
+        from src.backup_parser import parse_protobuf_backup
+        from src.suwayomi_populator import SuwayomiPopulator
 
-        config = load_config()
-        _scan_state["message"] = "Searching sources..."
+        # Parse backup entries
+        entries = parse_protobuf_backup(backup_path)
+        _scan_state["total"] = len(entries)
+        _scan_state["message"] = f"Found {len(entries)} entries, searching sources..."
 
-        result = asyncio.run(sync_from_backup(
-            backup_path=backup_path,
-            config=config,
-            populate_suwayomi=True,
-            clear_suwayomi_first=False,
-            dry_run=False,
-        ))
+        # Run populator
+        populator = SuwayomiPopulator(SUWAYOMI_URL)
+        result = asyncio.run(populator.populate(entries))
 
         _scan_state["status"] = "done"
         _scan_state.update({
