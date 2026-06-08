@@ -122,6 +122,34 @@ Some manga titles confuse AniList's search ranking — popular series often matc
 }
 ```
 
+## Downloading Manga
+
+Suwayomi auto-downloads **new chapters** as they release. To grab the **backlog** (existing chapters), use the built-in download CLI:
+
+```bash
+# Dry run first — see what would download
+docker exec michibiki python -m src.download "Omniscient Reader" --all --dry-run
+
+# Download all chapters (30 per batch, 3-min gaps — safe for Bato.to)
+docker exec michibiki python -m src.download "Omniscient Reader" --all
+
+# Download a range
+docker exec michibiki python -m src.download "One Piece" --range 1-100
+
+# First N chapters only
+docker exec michibiki python -m src.download "Solo Leveling" --limit 50
+
+# By Suwayomi manga ID (faster, no name lookup)
+docker exec michibiki python -m src.download --id 42 --all
+
+# Custom batch size and delay
+docker exec michibiki python -m src.download "Omniscient Reader" --all --batch-size 20 --delay 120
+```
+
+The title is fuzzy-matched against your Suwayomi library. If multiple series match, it lists them — use a more specific title or `--id`.
+
+Downloads land in `SUWAYOMI_DOWNLOADS_DIR` (defaults to Suwayomi's data volume, configurable in `.env`).
+
 ## Development
 
 ```bash
@@ -140,6 +168,7 @@ src/
 ├── anilist_search.py      # AniList title→media ID search
 ├── bakumon.py             # Orchestrator — parse→sync→populate
 ├── suwayomi_populator.py  # Suwayomi library population + tracker binding
+├── download.py            # CLI batch downloader (docker exec ... --all)
 ├── suwayomi.py            # Suwayomi GraphQL client (poll mode)
 ├── anilist.py             # AniList GraphQL client
 ├── state.py               # SQLite state store
