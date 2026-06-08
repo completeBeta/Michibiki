@@ -385,7 +385,14 @@ class SuwayomiPopulator:
     async def _bind_tracker(
         self, manga_id: int, anilist_media_id: int
     ) -> bool:
-        """Bind the AniList tracker to a Suwayomi manga."""
+        """Bind the AniList tracker to a Suwayomi manga.
+
+        NOTE: Suwayomi's bindTrack mutation requires a prior tracker
+        search to be done via the WebUI (it populates an internal cache).
+        Without it, bindTrack returns 'Collection is empty'. This is a
+        known limitation — bind trackers manually in the WebUI for now:
+        Manga → Tracking tab → search → select AniList entry.
+        """
         variables = {
             "input": {
                 "mangaId": manga_id,
@@ -397,6 +404,21 @@ class SuwayomiPopulator:
             data = await self._post(BIND_TRACK, variables)
         except Exception as e:
             log.error("Tracker bind failed for manga %d: %s", manga_id, e)
+            return False
+
+        # Check for errors (Suwayomi returns errors inline, not as HTTP errors)
+        if "errors" in data:
+            err_msg = str(data["errors"])
+            if "Collection is empty" in err_msg:
+                log.warning(
+                    "Tracker bind for manga %d requires manual setup: "
+                    "open Suwayomi WebUI → manga → Tracking tab → "
+                    "search AniList → select entry. "
+                    "(Suwayomi bindTrack bug: no prior search cache)",
+                    manga_id,
+                )
+            else:
+                log.warning("bindTrack error for manga %d: %s", manga_id, err_msg)
             return False
 
         bind_result = data.get("data", {}).get("bindTrack")
