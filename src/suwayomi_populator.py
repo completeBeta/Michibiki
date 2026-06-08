@@ -284,11 +284,8 @@ class SuwayomiPopulator:
                         result.skipped += 1
                         return
 
-                    # Skip entries without AniList IDs (can't bind tracker)
-                    if not entry.anilist_media_id:
-                        log.debug("No AniList ID for '%s' — skipping", entry.title)
-                        result.skipped += 1
-                        return
+                    # Skip entries without AniList IDs? No — add them anyway.
+                    # We just can't bind the tracker. User can do that manually.
 
                     manga_id = await self._search_and_add(entry, sources)
                     if manga_id:
@@ -307,7 +304,7 @@ class SuwayomiPopulator:
                     result.failed += 1
                     result.errors.append(f"{entry.title}: {e}")
 
-        tasks = [_process(e) for e in entries if e.anilist_media_id]
+        tasks = [_process(e) for e in entries]
         await asyncio.gather(*tasks)
 
         log.info(
