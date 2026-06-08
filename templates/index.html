@@ -280,7 +280,23 @@
   {% if library_empty %}
     <div class="empty-state">
       <p><strong>Library is empty</strong></p>
-      <p>Add manga to Suwayomi first — they'll appear here.</p>
+      <p>Import your Mihon backup to get started:</p>
+      <form 
+        hx-post="/api/import" 
+        hx-encoding="multipart/form-data"
+        hx-target="#import-status"
+        hx-swap="innerHTML"
+        style="margin-top: 1rem;"
+      >
+        <input type="file" name="backup_file" accept=".tachibk" required
+          style="margin-bottom: 0.5rem; color: var(--text);">
+        <br>
+        <button type="submit" class="btn"
+          style="margin-top: 0.5rem; padding: 0.5rem 1.5rem; background: var(--accent); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-size: 0.95rem;">
+          Import from Mihon
+        </button>
+      </form>
+      <div id="import-status" style="margin-top: 1rem;"></div>
     </div>
   {% else %}
     <div class="search-bar">
