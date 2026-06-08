@@ -2,20 +2,20 @@
 
 Uses Suwayomi's GraphQL API to:
 1. Discover installed source extensions
-2. Search for manga across available sources
+2. Search for manga across available sources (scored matching)
 3. Add manga to the library (fetchManga)
 4. Bind AniList trackers (bindTrack)
 5. Clear existing library (optional)
 
-Strategy: tries installed sources in order (skipping Local source).
-Doesn't require source IDs to match between Mihon and Suwayomi —
-just needs the right extensions installed.
+Strategy: tries installed sources in order, scores search results
+against the target title to avoid wrong matches.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +71,63 @@ mutation BindTrack($input: BindTrackInput!) {
 class SourceInfo:
     id: str
     name: str
+
+
+# Minimum score to accept a search match (0.0–1.0)
+MATCH_THRESHOLD = 0.50
+
+
+def _simplify(s: str) -> str:
+    """Lowercase, strip punctuation, normalize whitespace."""
+    s = s.lower()
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _score_suwayomi_match(
+    query: str, candidate: dict[str, Any]
+) -> float:
+    """Score how well a Suwayomi search result matches the target title.
+
+    Suwayomi results have a flat `title` field (not nested like AniList).
+    Returns 0.0–1.0.
+    """
+    q = _simplify(query)
+    if not q:
+        return 0.0
+
+    t = _simplify(candidate.get("title") or "")
+    if not t:
+        return 0.0
+
+    # Exact match
+    if t == q:
+        return 0.85
+    # Result title starts with query (e.g. "Gate" → "Gate: Where the JSDF Fought")
+    if t.startswith(q + " "):
+        return 0.90
+    # Query starts with result title
+    if q.startswith(t + " "):
+        return 0.80
+    # Result contains query as a whole word
+    if (" " + q + " ") in (" " + t + " "):
+        return 0.70
+    # Substring match
+    if q in t or t in q:
+        return 0.55
+
+    # Word overlap
+    q_words = set(q.split())
+    t_words = set(t.split())
+    if q_words and t_words:
+        overlap = len(q_words & t_words)
+        if overlap == len(q_words):
+            return 0.50 + (0.10 * min(overlap / len(t_words), 1))
+        elif overlap > 0:
+            return 0.30 * (overlap / len(q_words))
+
+    return 0.0
 
 
 @dataclass
@@ -358,11 +415,33 @@ class SuwayomiPopulator:
     def _pick_best_match(
         title: str, results: list[dict[str, Any]]
     ) -> dict[str, Any] | None:
-        """Pick the best matching manga from search results."""
-        title_lower = title.lower().strip()
-        # Prefer exact title match
-        for r in results:
-            if (r.get("title") or "").lower().strip() == title_lower:
-                return r
-        # Fall back to first result
-        return results[0] if results else None
+        """Pick the best matching manga from search results using scoring.
+
+        Scores each result against the target title and returns the
+        highest-scoring match above the threshold. This prevents
+        wrong matches (e.g. 'Gate' → 'Dragon Tiger Gate GOLD').
+        """
+        if not results:
+            return None
+
+        scored = [
+            (candidate, _score_suwayomi_match(title, candidate))
+            for candidate in results
+        ]
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        best, best_score = scored[0]
+
+        # Log all candidates for debugging
+        for c, s in scored:
+            log.debug("  Candidate: '%s' — score %.2f", c.get("title", "?"), s)
+
+        if best_score >= 0.50:
+            log.info("  Best match: '%s' (score %.2f)", best.get("title", "?"), best_score)
+            return best
+
+        log.warning(
+            "No good match for '%s' (best: '%s', score %.2f < 0.50)",
+            title, best.get("title", "?"), best_score,
+        )
+        return None

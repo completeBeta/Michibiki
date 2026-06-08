@@ -23,54 +23,68 @@ Mihon (phone) ──Syncthing──▶ backup files (.tachibk)
 - **Backup parser** extracts manga titles, chapter progress, and existing AniList tracker bindings from Mihon's protobuf backup files
 - **AniList search** fuzzy-matches unbound manga to AniList media IDs
 - **AniList sync** pushes reading progress via `SaveMediaListEntry` mutation
-- **Suwayomi population** (experimental) searches extensions, adds manga to library, and binds trackers. **Currently WIP** — the population strategy and data movement pipeline will be standardized in a future update. For now, set `POPULATE_SUWAYOMI=false` and use only the AniList sync.
+- **Suwayomi population** searches installed extension sources, adds manga to the Suwayomi library, and binds AniList trackers. Works automatically with any installed source — no ID mapping needed.
 
-## Prerequisites
+## Setup Checklist
 
-1. **Mihon** on Android with scheduled auto-backups enabled (Settings → Data and storage → Backups → every 24h)
-2. **Syncthing** syncing Mihon's backup folder to the server (phone → server, Send Only recommended)
-3. **Suwayomi-Server** running (for library population mode — optional if only using AniList sync)
-4. **AniList OAuth token** — create a client at [AniList Developer Settings](https://anilist.co/settings/developer), then visit:
-   ```
-   https://anilist.co/api/v2/oauth/authorize?client_id=YOUR_CLIENT_ID&response_type=token
-   ```
-   Copy the token from the redirect URL.
+Every step you need to do. Run through this once, in order.
 
-### Suwayomi Extensions (for library population — WIP)
+### 1. Mihon auto-backups
 
-> ⚠️ Suwayomi population is experimental and not yet production-ready. This section is for future reference.
+On your Android device: Mihon → Settings → Data and storage → Backups → every 24h.
 
-If using `POPULATE_SUWAYOMI=true`, install source extensions in Suwayomi's WebUI:
+### 2. Syncthing
 
-1. Open **Suwayomi WebUI** → Settings → Browse → Extension repos
-2. Add the Keiyoushi extension repo:
+Sync Mihon's backup folder to the server. Phone → server, **Send Only**.
+The server folder should be the path mounted as `BACKUP_HOST_DIR` in docker-compose.
+
+### 3. AniList API token
+
+Create a client at [AniList Developer Settings](https://anilist.co/settings/developer),
+then visit:
+```
+https://anilist.co/api/v2/oauth/authorize?client_id=YOUR_CLIENT_ID&response_type=token
+```
+Copy the token from the redirect URL. Paste into `.env` as `ANILIST_TOKEN`.
+
+### 4. Suwayomi source extensions
+
+If `POPULATE_SUWAYOMI=true` (auto-add manga to Suwayomi), install the
+source extensions your manga are on:
+
+1. Open **Suwayomi WebUI** (`http://<server>:4567`) → Settings → Browse → Extension repos
+2. Add the Keiyoushi repo:
    ```
    https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json
    ```
-3. Go to Extensions tab → install the sources your Mihon uses (e.g., Bato.to, MangaDex, Comick)
+3. Extensions tab → install sources (e.g., **Bato.to**, MangaDex, Comick)
 
-Without extensions installed, Suwayomi population will fail silently — only the AniList sync is essential.
+### 5. Suwayomi AniList tracker login
 
-## Quick Start
+**Required for tracker binding.** Without this, manga will be added to
+Suwayomi but won't be linked to your AniList account.
+
+1. Suwayomi WebUI → Settings → Trackers
+2. Click **AniList** → **Login**
+3. Authorize in the popup
+
+Verify it worked: the AniList tracker should show a green check or
+logged-in status. The populator binds trackers automatically after this.
+
+### 6. Configure and start
 
 ```bash
-# Clone
-git clone https://github.com/completeBeta/Michibiki.git
-cd Michibiki
-
-# Configure
 cp .env.example .env
-# Edit .env — paste your AniList token
+# Edit .env:
+#   ANILIST_TOKEN=your-token-here
+#   DRY_RUN=false
+#   POPULATE_SUWAYOMI=true  (if you want auto-add to Suwayomi)
 
-# Create backup directory for Syncthing to drop files into
-mkdir -p backups
-
-# Dry run first
-DRY_RUN=true MODE=watch docker compose up michibiki
+# First run — dry run
+DRY_RUN=true docker compose up michibiki
 docker compose logs michibiki
 
-# Live run
-# Set DRY_RUN=false in .env, then:
+# Live
 docker compose up -d
 ```
 
@@ -84,7 +98,7 @@ docker compose up -d
 | `DRY_RUN` | `false` | Log updates without pushing to AniList |
 | `MODE` | `watch` | `watch` for backup watcher, `poll` for Suwayomi→AniList |
 | `BACKUP_DIR` | `/app/backups` | Directory watched for `.tachibk` files |
-| `POPULATE_SUWAYOMI` | `false` | (WIP) Add manga to Suwayomi + bind AniList trackers |
+| `POPULATE_SUWAYOMI` | `false` | Add manga to Suwayomi + bind AniList trackers (requires source extensions + tracker login) |
 | `CLEAR_SUWAYOMI_FIRST` | `false` | Remove all manga from Suwayomi before populating |
 | `SUWAYOMI_DOWNLOADS_DIR` | *(auto)* | Where Suwayomi writes downloaded CBZ files. Defaults inside Suwayomi's data volume. Set to any host path (local folder, CIFS/NFS mount) to redirect downloads — e.g. `/mnt/nas/manga` |
 
