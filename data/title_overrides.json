@@ -1,4 +1,6 @@
 {
-    "_comment": "Map backup titles to AniList media IDs. Keys are case-insensitive. Edit on host, restart container — no rebuild needed.",
-    "gate": 71733
+    "_comment": "Map backup titles to AniList media IDs. Keys are case-insensitive, lowercase. Edit on host, restart container — no rebuild needed.",
+    "gate": 71733,
+    "classroom of the elite": 96798,
+    "that time i got reincarnated as a slime": 86399
 }
