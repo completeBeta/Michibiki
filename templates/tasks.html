@@ -1,0 +1,24 @@
+<div class="task-list" id="tasks">
+  {% if tasks %}
+    <h2>Download Tasks</h2>
+    {% for t in tasks %}
+      <div class="task-item">
+        <span class="task-status {{ t.status }}">{{ t.status }}</span>
+        <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          {{ t.manga_title }}
+          {% if t.dry_run %}<em style="color: var(--orange);">(dry run)</em>{% endif %}
+        </span>
+        <span style="font-size: 0.8rem; color: var(--muted); flex-shrink: 0;">
+          {{ t.queued }}/{{ t.total_chapters }} ch
+        </span>
+        <div class="task-progress">
+          <div class="task-progress-bar"
+               style="width: {{ (t.queued / t.total_chapters * 100) if t.total_chapters else 0 }}%"></div>
+        </div>
+        {% if t.error %}
+          <span class="error" style="font-size: 0.75rem;">{{ t.error }}</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>

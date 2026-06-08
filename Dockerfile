@@ -10,8 +10,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
+COPY templates/ ./templates/
+COPY entrypoint.sh .
 
 # Compile protobuf schema
 RUN python -m grpc_tools.protoc -I src --python_out=src src/mihon_backup.proto
 
-CMD ["python", "-m", "src.main"]
+EXPOSE 5001
+
+CMD ["./entrypoint.sh"]
