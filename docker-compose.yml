@@ -3,6 +3,8 @@ services:
     build: .
     container_name: michibiki
     restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-5001}:5001"
     environment:
       - SUWAYOMI_URL=http://suwayomi:4567/api/graphql
       - ANILIST_TOKEN=${ANILIST_TOKEN}

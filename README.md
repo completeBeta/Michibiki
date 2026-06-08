@@ -122,7 +122,32 @@ Some manga titles confuse AniList's search ranking — popular series often matc
 }
 ```
 
-## Downloading Manga
+## WebUI
+
+A browser-based control panel runs alongside the sync service. Access it at:
+
+```
+http://<server>:5001
+```
+
+**Features:**
+- **Library browser** — searchable list of all manga in Suwayomi
+- **Chapter view** — see which chapters are downloaded (green) vs pending
+- **Download controls** — All / Range / First-N with Dry Run toggle
+- **Task monitor** — live progress bars for queued downloads
+
+**Behind Cloudflare Access** (recommended for remote access):
+
+Add a Cloudflare Tunnel route pointing at `http://michibiki:5001` with
+Zero Trust Access policy. The WebUI has no built-in auth — it's designed
+to sit behind CF Access.
+
+### Downloading Manga
+
+Two ways to download:
+
+1. **WebUI** — open `http://<server>:5001`, click a manga, hit Download
+2. **CLI** — `docker exec michibiki python -m src.download "Title" --all`
 
 Suwayomi auto-downloads **new chapters** as they release. To grab the **backlog** (existing chapters), use the built-in download CLI:
 

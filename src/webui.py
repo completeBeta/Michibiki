@@ -1,0 +1,341 @@
+"""Michibiki WebUI — browser-based control panel for Suwayomi downloads.
+
+FastAPI + Jinja2 + HTMX. Runs alongside the sync service.
+Designed for Cloudflare Access — no built-in auth (CF handles it).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+import uuid
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+from fastapi import FastAPI, Form, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from src.download import (
+    _find_manga,
+    _get_chapters,
+    _queue_batch,
+)
+
+log = logging.getLogger("michibiki.webui")
+
+SUWAYOMI_URL = os.getenv("SUWAYOMI_URL", "http://suwayomi:4567/api/graphql")
+WEBUI_PORT = int(os.getenv("WEBUI_PORT", "5001"))
+
+# ── Download task tracker (in-memory, lost on restart) ──────────────
+
+@dataclass
+class DownloadTask:
+    task_id: str
+    manga_title: str
+    total_chapters: int
+    queued: int = 0
+    status: str = "pending"  # pending | running | done | failed
+    dry_run: bool = False
+    error: str | None = None
+    started_at: float = field(default_factory=time.time)
+
+_download_tasks: dict[str, DownloadTask] = {}
+
+# ── App setup ───────────────────────────────────────────────────────
+
+templates = Jinja2Templates(directory="/app/templates")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("WebUI starting on port %d", WEBUI_PORT)
+    yield
+
+
+app = FastAPI(
+    title="Michibiki",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+)
+
+# ── Security middleware ─────────────────────────────────────────────
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = (
+        "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+        "magnetometer=(), microphone=(), payment=(), usb=()"
+    )
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    return response
+
+
+# ── GraphQL helpers ─────────────────────────────────────────────────
+
+async def _graphql(query: str, variables: dict | None = None) -> dict:
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            SUWAYOMI_URL,
+            json={"query": query, "variables": variables or {}},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _get_library() -> list[dict[str, Any]]:
+    """Get all manga in Suwayomi library with chapter counts."""
+    data = await _graphql("""
+    query {
+      mangas(inLibrary: true) {
+        nodes {
+          id
+          title
+          chapterCount
+          downloadCount
+          unreadCount
+          sourceId
+        }
+      }
+    }
+    """)
+    return data.get("data", {}).get("mangas", {}).get("nodes", [])
+
+
+async def _get_manga_detail(manga_id: int) -> dict | None:
+    data = await _graphql("""
+    query($id: Int!) {
+      manga(id: $id) {
+        id
+        title
+        chapterCount
+        downloadCount
+        chapters {
+          nodes {
+            id
+            name
+            chapterNumber
+            downloaded
+          }
+        }
+      }
+    }
+    """, {"id": manga_id})
+    return data.get("data", {}).get("manga", None)
+
+
+# ── Background download runner ──────────────────────────────────────
+
+async def _run_download(
+    task_id: str,
+    manga_id: int,
+    *,
+    all_chapters: bool = False,
+    chapter_range: str | None = None,
+    dry_run: bool = False,
+    batch_size: int = 30,
+    delay: int = 180,
+    limit: int | None = None,
+):
+    """Run a download task in the background, updating _download_tasks."""
+    task = _download_tasks.get(task_id)
+    if not task:
+        return
+
+    try:
+        task.status = "running"
+        async with httpx.AsyncClient(timeout=30) as client:
+            chapters = await _get_chapters(client, manga_id)
+            task.total_chapters = len(chapters)
+
+            # Filter
+            if chapter_range:
+                try:
+                    start, end = chapter_range.split("-")
+                    start_c, end_c = float(start), float(end)
+                except ValueError:
+                    task.status = "failed"
+                    task.error = f"Invalid range: {chapter_range}"
+                    return
+                chapters = [
+                    c for c in chapters
+                    if start_c <= float(c.get("chapterNumber", 0) or 0) <= end_c
+                ]
+            if limit:
+                chapters = chapters[:limit]
+
+            if not chapters:
+                task.status = "done"
+                task.queued = 0
+                return
+
+            if dry_run:
+                task.queued = len(chapters)
+                task.status = "done"
+                return
+
+            # Queue in batches
+            chapter_ids = [c["id"] for c in chapters]
+            batches = [
+                chapter_ids[i : i + batch_size]
+                for i in range(0, len(chapter_ids), batch_size)
+            ]
+
+            task.total_chapters = len(chapter_ids)
+            for i, batch in enumerate(batches, 1):
+                await _queue_batch(client, batch)
+                task.queued += len(batch)
+                if i < len(batches):
+                    # Non-blocking sleep — yield to other tasks
+                    for _ in range(delay):
+                        if task.status == "cancelled":
+                            return
+                        await asyncio.sleep(1)
+
+            task.status = "done"
+
+    except Exception as e:
+        log.error("Download task %s failed: %s", task_id, e)
+        task.status = "failed"
+        task.error = str(e)
+
+
+# ── Routes ──────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def library_view(request: Request):
+    """Main page — library list with search."""
+    try:
+        manga_list = await _get_library()
+    except Exception as e:
+        log.error("Failed to fetch library: %s", e)
+        manga_list = []
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "manga": manga_list,
+            "library_empty": len(manga_list) == 0,
+            "tasks": list(_download_tasks.values()),
+        },
+    )
+
+
+@app.get("/manga/{manga_id}", response_class=HTMLResponse)
+async def manga_detail(request: Request, manga_id: int):
+    """Manga detail — chapters, download status, controls."""
+    try:
+        manga = await _get_manga_detail(manga_id)
+    except Exception as e:
+        log.error("Failed to fetch manga %d: %s", manga_id, e)
+        return HTMLResponse(f"<p class='error'>Error: {e}</p>", status_code=500)
+
+    if not manga:
+        return HTMLResponse("<p class='error'>Manga not found</p>", status_code=404)
+
+    return templates.TemplateResponse(
+        "manga_detail.html",
+        {"request": request, "manga": manga},
+    )
+
+
+@app.post("/download")
+async def start_download(
+    request: Request,
+    manga_id: int = Form(...),
+    manga_title: str = Form(...),
+    action: str = Form("all"),
+    chapter_range: str | None = Form(None),
+    limit: str | None = Form(None),
+    batch_size: int = Form(30),
+    delay: int = Form(180),
+    dry_run: bool = Form(False),
+):
+    """Queue a download task (POST-only)."""
+    task_id = uuid.uuid4().hex[:8]
+    task = DownloadTask(
+        task_id=task_id,
+        manga_title=manga_title,
+        total_chapters=0,
+        dry_run=dry_run,
+    )
+    _download_tasks[task_id] = task
+
+    all_chapters = action == "all"
+    limit_int = int(limit) if limit and limit.strip() else None
+
+    asyncio.create_task(
+        _run_download(
+            task_id,
+            manga_id,
+            all_chapters=all_chapters,
+            chapter_range=chapter_range if action == "range" else None,
+            dry_run=dry_run,
+            batch_size=batch_size,
+            delay=delay,
+            limit=limit_int,
+        )
+    )
+
+    # Cleanup old tasks (keep last 50)
+    if len(_download_tasks) > 50:
+        oldest = sorted(_download_tasks.keys())[: len(_download_tasks) - 50]
+        for k in oldest:
+            del _download_tasks[k]
+
+    return RedirectResponse(url=f"/manga/{manga_id}?task={task_id}", status_code=303)
+
+
+@app.get("/tasks", response_class=HTMLResponse)
+async def tasks_view(request: Request):
+    """HTMX partial — refresh task list."""
+    tasks = sorted(_download_tasks.values(), key=lambda t: t.started_at, reverse=True)
+    return templates.TemplateResponse(
+        "tasks.html",
+        {"request": request, "tasks": tasks},
+    )
+
+
+# ── CLI entrypoint ──────────────────────────────────────────────────
+
+def main():
+    import uvicorn
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    uvicorn.run(app, host="0.0.0.0", port=WEBUI_PORT, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

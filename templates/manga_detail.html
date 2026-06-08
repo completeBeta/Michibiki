@@ -1,0 +1,48 @@
+<a href="/" class="back-link">← Back to library</a>
+<h1 style="margin-bottom: 0.5rem;">{{ manga.title }}</h1>
+<p style="color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
+  {{ manga.chapterCount }} chapters &middot; {{ manga.downloadCount }} downloaded
+</p>
+
+<!-- Download controls -->
+<form
+  class="controls"
+  hx-post="/download"
+  hx-target="#flash"
+  hx-swap="innerHTML"
+>
+  <input type="hidden" name="manga_id" value="{{ manga.id }}">
+  <input type="hidden" name="manga_title" value="{{ manga.title }}">
+
+  <label>
+    <input type="radio" name="action" value="all" checked> All
+  </label>
+  <label>
+    <input type="radio" name="action" value="range"> Range
+    <input type="text" name="chapter_range" placeholder="1-50" style="width: 80px;">
+  </label>
+  <label>
+    <input type="radio" name="action" value="limit"> First
+    <input type="number" name="limit" value="50" min="1" style="width: 70px;">
+  </label>
+
+  <label title="Show what would download without actually queuing">
+    <input type="checkbox" name="dry_run" value="true"> Dry Run
+  </label>
+
+  <button type="submit" class="btn btn-primary">Download</button>
+</form>
+
+<div id="flash"></div>
+
+<!-- Chapter list -->
+<h2>Chapters</h2>
+<div class="chapter-grid">
+  {% for ch in manga.chapters.nodes %}
+    <div class="chapter-item {% if ch.downloaded %}downloaded{% endif %}"
+         title="Ch. {{ ch.chapterNumber }} — {{ ch.name }}">
+      <span>{{ "%.1f"|format(ch.chapterNumber|float) if ch.chapterNumber else '?' }}</span>
+      <span class="ch-dot"></span>
+    </div>
+  {% endfor %}
+</div>
