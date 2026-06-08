@@ -32,6 +32,12 @@ from src.download import (
 
 log = logging.getLogger("michibiki.webui")
 
+# Scan progress state (shared between /api/rescan and /api/status polling)
+_scan_state: dict[str, Any] = {
+    "running": False, "status": "", "message": "",
+    "added": 0, "bound": 0, "skipped": 0, "failed": 0, "total": 0,
+}
+
 SUWAYOMI_URL = os.getenv("SUWAYOMI_URL", "http://suwayomi:4567/api/graphql")
 WEBUI_PORT = int(os.getenv("WEBUI_PORT", "5001"))
 
