@@ -133,10 +133,10 @@ async def _get_library() -> list[dict[str, Any]]:
         nodes {
           id
           title
-          chapterCount
           downloadCount
           unreadCount
           sourceId
+          chaptersAge
         }
       }
     }
