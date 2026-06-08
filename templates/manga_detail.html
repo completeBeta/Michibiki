@@ -1,7 +1,7 @@
 <a href="/" class="back-link">← Back to library</a>
 <h1 style="margin-bottom: 0.5rem;">{{ manga.title }}</h1>
 <p style="color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
-  {{ manga.chapterCount }} chapters &middot; {{ manga.downloadCount }} downloaded
+  {{ manga.chapters.nodes|length }} chapters &middot; {{ manga.downloadCount }} downloaded
 </p>
 
 <!-- Download controls -->
@@ -39,7 +39,7 @@
 <h2>Chapters</h2>
 <div class="chapter-grid">
   {% for ch in manga.chapters.nodes %}
-    <div class="chapter-item {% if ch.downloaded %}downloaded{% endif %}"
+    <div class="chapter-item {% if ch.isDownloaded %}downloaded{% endif %}"
          title="Ch. {{ ch.chapterNumber }} — {{ ch.name }}">
       <span>{{ "%.1f"|format(ch.chapterNumber|float) if ch.chapterNumber else '?' }}</span>
       <span class="ch-dot"></span>

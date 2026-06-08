@@ -150,14 +150,15 @@ async def _get_manga_detail(manga_id: int) -> dict | None:
       manga(id: $id) {
         id
         title
-        chapterCount
         downloadCount
-        chapters(condition: { mangaId: $id }) {
+        unreadCount
+        chapters {
           nodes {
             id
             name
             chapterNumber
-            downloaded
+            isDownloaded
+            pageCount
           }
         }
       }
