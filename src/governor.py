@@ -97,8 +97,14 @@ class Governor:
                 log.info("Batch complete: %d done, %d failed", len(known_finished), len(known_failed))
                 return list(known_finished), list(known_failed)
 
-            # If queue is empty and we still have remaining, the remaining might
-            # have completed and fallen off the queue. Count them as done.
+            # If queue is empty and we still have remaining, they either completed
+            # (fell off queue) or were never queued (already downloaded / rejected).
+            # Log what's happening for debugging.
+            if not queue:
+                log.debug(
+                    "Queue empty, %d chapters unaccounted (%d in queue)",
+                    len(remaining), len(queue_ids),
+                )
             queue_ids = set()
             for item in queue:
                 ch = item.get("chapter")
