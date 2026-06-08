@@ -2,6 +2,9 @@
 
 CLI tool — run inside the container:
   docker exec michibiki python -m src.download "Omniscient Reader" --all
+
+With --governor (default), uses real-time WebSocket tracking.
+Without --governor, uses blind time.sleep between batches.
 """
 
 import argparse
@@ -130,6 +133,7 @@ async def download(
     delay: int = 180,
     dry_run: bool = False,
     limit: int | None = None,
+    no_governor: bool = False,
 ) -> int:
     """Download manga chapters from Suwayomi.
 
@@ -195,28 +199,51 @@ async def download(
                 print(f"  ... and {len(chapters) - 10} more")
             return 0
 
-        # Queue
+        # Queue with real-time completion tracking via WebSocket
+        from src.governor import Governor
+
         chapter_ids = [c["id"] for c in chapters]
         batches = [
             chapter_ids[i : i + batch_size]
             for i in range(0, len(chapter_ids), batch_size)
         ]
-        print(
-            f"\nQueuing {len(chapter_ids)} chapters in {len(batches)} batches "
-            f"(batch={batch_size}, delay={delay}s)"
-        )
 
-        for i, batch in enumerate(batches, 1):
-            state = await _queue_batch(client, batch)
-            print(f"[{i}/{len(batches)}] Queued {len(batch)} chapters → {state}")
-            if i < len(batches):
-                for remaining in range(delay, 0, -30):
-                    print(f"  Waiting {remaining}s...")
-                    time.sleep(min(30, remaining))
-                print()
+        if no_governor:
+            print(
+                f"\nQueuing {len(chapter_ids)} chapters in {len(batches)} batches "
+                f"(batch={batch_size}, delay={delay}s)"
+            )
+            for i, batch in enumerate(batches, 1):
+                state = await _queue_batch(client, batch)
+                print(f"[{i}/{len(batches)}] Queued {len(batch)} chapters → {state}")
+                if i < len(batches):
+                    for remaining in range(delay, 0, -30):
+                        print(f"  Waiting {remaining}s...")
+                        time.sleep(min(30, remaining))
+                    print()
+        else:
+            print(
+                f"\nQueuing {len(chapter_ids)} chapters in {len(batches)} batches "
+                f"(governor tracking, timeout={delay}s/chapter)"
+            )
+            governor = Governor()
+            try:
+                await governor.connect()
+                for i, batch in enumerate(batches, 1):
+                    state = await _queue_batch(client, batch)
+                    print(f"[{i}/{len(batches)}] Queued {len(batch)} chapters → {state}")
+                    if i < len(batches):
+                        print(f"  Watching for completion...")
+                        done, failed = await governor.wait_for_batch(
+                            batch, timeout_per_chapter=delay
+                        )
+                        print(f"  Batch complete: {len(done)} done, {len(failed)} failed")
+                        print()
+            finally:
+                await governor.disconnect()
 
-        print(f"\nDone — {len(chapter_ids)} chapters queued. Suwayomi is downloading them.")
-        print(f"Check: ls /downloads/  (or your SUWAYOMI_DOWNLOADS_DIR)")
+        print(f"\nDone — {len(chapter_ids)} chapters queued. Downloads complete.")
+        print(f"Files at: /downloads/ (mounted from host SUWAYOMI_DOWNLOADS_DIR)")
         return 0
 
 
@@ -247,10 +274,18 @@ def main():
         "--batch-size", type=int, default=30, help="Chapters per batch (default: 30)"
     )
     parser.add_argument(
-        "--delay", type=int, default=180, help="Seconds between batches (default: 180)"
+        "--delay", type=int, default=180, help="Seconds between batches / timeout per chapter (default: 180)"
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be downloaded"
+    )
+    parser.add_argument(
+        "--no-governor", action="store_true",
+        help="Use blind time.sleep instead of WebSocket tracking"
+    )
+    parser.add_argument(
+        "--organize", action="store_true",
+        help="After download, organize CBZs into /downloads/<Manga>/"
     )
     args = parser.parse_args()
 
@@ -265,6 +300,7 @@ def main():
                 delay=args.delay,
                 dry_run=args.dry_run,
                 limit=args.limit,
+                no_governor=args.no_governor,
             )
         )
     )
