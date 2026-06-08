@@ -120,7 +120,7 @@ async def _get_library() -> list[dict[str, Any]]:
     """Get all manga in Suwayomi library with chapter counts."""
     data = await _graphql("""
     query {
-      mangas(inLibrary: true) {
+      mangas(condition: { inLibrary: true }) {
         nodes {
           id
           title
@@ -143,7 +143,7 @@ async def _get_manga_detail(manga_id: int) -> dict | None:
         title
         chapterCount
         downloadCount
-        chapters {
+        chapters(condition: { mangaId: $id }) {
           nodes {
             id
             name
