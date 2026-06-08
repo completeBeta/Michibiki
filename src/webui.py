@@ -487,7 +487,16 @@ async def start_download(
         for k in oldest:
             del _download_tasks[k]
 
-    return RedirectResponse(url=f"/manga/{manga_id}?task={task_id}", status_code=303)
+    label = "DRY RUN" if dry_run else "Download"
+    num = limit_int if action == "limit" else (f"range {chapter_range}" if action == "range" else "all")
+    return HTMLResponse(
+        '<div class="flash flash-info" hx-get="/tasks" hx-trigger="load, every 3s" hx-swap="outerHTML">'
+        f'<span class="spinner"></span>'
+        f" {label} queued for <strong>{manga_title}</strong>"
+        f" ({num}) — "
+        f'<a href="/manga/{manga_id}">view detail</a>'
+        "</div>"
+    )
 
 
 @app.get("/tasks", response_class=HTMLResponse)
