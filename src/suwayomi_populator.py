@@ -66,6 +66,17 @@ mutation BindTrack($input: BindTrackInput!) {
 }
 """
 
+FETCH_CHAPTERS = """
+mutation FetchChapters($input: FetchChaptersInput!) {
+  fetchChapters(input: $input) {
+    clientMutationId
+    chapters {
+      name
+    }
+  }
+}
+"""
+
 
 @dataclass
 class SourceInfo:
@@ -380,7 +391,35 @@ class SuwayomiPopulator:
         if manga_id:
             log.info("Added '%s' via %s → Suwayomi ID %d",
                      entry.title, source.name, manga_id)
+            # Fetch chapter list (Suwayomi doesn't auto-fetch on add)
+            await self._fetch_chapters(manga_id)
         return manga_id
+
+    async def _fetch_chapters(self, manga_id: int) -> bool:
+        """Trigger chapter list fetch for a newly added manga.
+
+        Suwayomi does NOT auto-fetch chapters when manga is added to the
+        library. Without this, chapters() returns 0 and the WebUI shows
+        empty manga. Must be called after fetchManga succeeds.
+        """
+        try:
+            data = await self._post(FETCH_CHAPTERS, {
+                "input": {"mangaId": manga_id}
+            })
+        except Exception as e:
+            log.warning("Chapter fetch failed for manga %d: %s", manga_id, e)
+            return False
+
+        if "errors" in data:
+            log.warning("Chapter fetch error for manga %d: %s",
+                        manga_id, data["errors"])
+            return False
+
+        chapters = (data.get("data", {})
+                    .get("fetchChapters", {})
+                    .get("chapters") or [])
+        log.info("Fetched %d chapters for manga %d", len(chapters), manga_id)
+        return True
 
     async def _bind_tracker(
         self, manga_id: int, anilist_media_id: int
