@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
 
+from src.config import load_config
+from src.bakumon import sync_from_backup
 from src.download import (
     _find_manga,
     _get_chapters,
@@ -246,6 +248,71 @@ def _task_to_dict(t: DownloadTask) -> dict:
         "error": t.error,
     }
 
+
+@app.post("/api/import")
+async def import_backup(request: Request):
+    """Upload a Mihon .tachibk backup and populate Suwayomi."""
+    import tempfile
+    from fastapi import UploadFile, File
+    
+    form = await request.form()
+    uploaded: UploadFile = form.get("backup_file")
+    
+    if not uploaded or not uploaded.filename:
+        return HTMLResponse(
+            '<div class="toast error">No file selected</div>',
+            status_code=400
+        )
+    
+    if not uploaded.filename.endswith(".tachibk"):
+        return HTMLResponse(
+            f'<div class="toast error">Expected .tachibk file, got {uploaded.filename}</div>',
+            status_code=400
+        )
+    
+    try:
+        # Save uploaded backup
+        backup_dir = "data"
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, uploaded.filename)
+        
+        contents = await uploaded.read()
+        with open(backup_path, "wb") as f:
+            f.write(contents)
+        
+        # Load config and run populator
+        config = load_config()
+        result = await sync_from_backup(
+            backup_path=backup_path,
+            config=config,
+            populate_suwayomi=True,
+            clear_suwayomi_first=False,
+            dry_run=False,
+        )
+        
+        # Build response
+        lines = []
+        if result.get("populated"):
+            lines.append(f'<div class="toast success">✅ Added {result["populated"]} manga to library</div>')
+        if result.get("synced"):
+            lines.append(f'<div class="toast info">📖 Synced progress for {result["synced"]} manga</div>')
+        if result.get("errors"):
+            lines.append(f'<div class="toast warn">⚠️ {len(result["errors"])} errors (check logs)</div>')
+        if not result.get("populated") and not result.get("synced"):
+            lines.append('<div class="toast info">No new manga to add</div>')
+        
+        # Return with HX-Refresh to reload library
+        return HTMLResponse(
+            "".join(lines),
+            headers={"HX-Refresh": "true"}
+        )
+    
+    except Exception as e:
+        log.exception("Import failed")
+        return HTMLResponse(
+            f'<div class="toast error">Import failed: {e}</div>',
+            status_code=500
+        )
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
