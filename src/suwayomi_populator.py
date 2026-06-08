@@ -1,15 +1,22 @@
 """Suwayomi library populator — programmatically add manga and bind trackers.
 
 Uses Suwayomi's GraphQL API to:
-1. Search for manga in source extensions
-2. Add manga to the library (fetchManga)
-3. Bind AniList trackers (bindTrack)
-4. Clear existing library (optional)
+1. Discover installed source extensions
+2. Search for manga across available sources
+3. Add manga to the library (fetchManga)
+4. Bind AniList trackers (bindTrack)
+5. Clear existing library (optional)
+
+Strategy: tries installed sources in order (skipping Local source).
+Doesn't require source IDs to match between Mihon and Suwayomi —
+just needs the right extensions installed.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -18,10 +25,6 @@ log = logging.getLogger(__name__)
 
 # AniList tracker ID in Suwayomi
 ANILIST_TRACKER_ID = 2
-
-# Source IDs for common extensions (same across Mihon/Suwayomi since
-# they share the keiyoushi extension ecosystem)
-BATOTO_SOURCE_ID = 1678128543826757763
 
 # GraphQL fragments
 FETCH_SOURCE_MANGA = """
@@ -63,17 +66,11 @@ mutation BindTrack($input: BindTrackInput!) {
 }
 """
 
-UPDATE_TRACK = """
-mutation UpdateTrack($input: UpdateTrackInput!) {
-  updateTrack(input: $input) {
-    clientMutationId
-    trackRecord {
-      id
-      lastChapterRead
-    }
-  }
-}
-"""
+
+@dataclass
+class SourceInfo:
+    id: str
+    name: str
 
 
 @dataclass
@@ -84,11 +81,7 @@ class PopulateResult:
     bound: int = 0
     skipped: int = 0
     failed: int = 0
-    errors: list[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
+    errors: list[str] = field(default_factory=list)
 
 
 class SuwayomiPopulator:
@@ -96,66 +89,92 @@ class SuwayomiPopulator:
 
     def __init__(self, graphql_url: str):
         self.url = graphql_url
+        self._sources: list[SourceInfo] | None = None
+        self._library_titles: set[str] | None = None
 
-    async def clear_library(self) -> int:
-        """Remove all manga from Suwayomi's library.
-
-        Returns count of removed manga.
-        """
-        query = """
-        mutation ClearLibrary {
-          updateMangas(input: {clientMutationId: "clear", patch: {inLibrary: false}}) {
-            clientMutationId
-          }
-        }
-        """
-        # Actually, Suwayomi may not support bulk update. Let's use
-        # the query-then-delete approach via updateManga for each manga.
-        manga_query = """
-        query GetAllManga {
-          mangas(condition: {inLibrary: true}) {
-            nodes { id title }
-          }
-        }
-        """
+    async def _post(self, query: str, variables: dict | None = None) -> dict:
+        """Execute a GraphQL query. Raises on HTTP errors, returns parsed JSON."""
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 self.url,
-                json={"query": manga_query},
+                json={"query": query, "variables": variables or {}},
                 headers={"Content-Type": "application/json"},
             )
             resp.raise_for_status()
-            data = resp.json()
-            mangas = data.get("data", {}).get("mangas", {}).get("nodes", [])
+            return resp.json()
 
-            count = 0
-            for m in mangas:
-                # Remove from library via updateManga
-                mutation = """
-                mutation RemoveFromLibrary($input: UpdateMangaInput!) {
-                  updateManga(input: $input) {
-                    clientMutationId
-                  }
+    async def _get_installed_sources(self) -> list[SourceInfo]:
+        """Discover installed source extensions, excluding Local source."""
+        if self._sources is not None:
+            return self._sources
+
+        data = await self._post("""
+        query {
+          sources {
+            nodes { id name }
+          }
+        }
+        """)
+        nodes = data.get("data", {}).get("sources", {}).get("nodes", [])
+        sources = []
+        for n in nodes:
+            sid = n.get("id", "")
+            name = n.get("name", "")
+            # Skip Local source (id "0") — can't search it
+            if sid and sid != "0" and name.lower() != "local source":
+                sources.append(SourceInfo(id=sid, name=name))
+
+        log.info("Found %d usable sources: %s", len(sources),
+                 ", ".join(s.name for s in sources))
+        self._sources = sources
+        return sources
+
+    async def _get_library_titles(self) -> set[str]:
+        """Get lowercase titles already in the Suwayomi library."""
+        if self._library_titles is not None:
+            return self._library_titles
+
+        data = await self._post("""
+        query {
+          mangas(inLibrary: true) {
+            nodes { title }
+          }
+        }
+        """)
+        nodes = data.get("data", {}).get("mangas", {}).get("nodes", [])
+        titles = {n["title"].lower().strip() for n in nodes if n.get("title")}
+        log.info("Library has %d manga", len(titles))
+        self._library_titles = titles
+        return titles
+
+    async def clear_library(self) -> int:
+        """Remove all manga from Suwayomi's library."""
+        data = await self._post("""
+        query {
+          mangas(inLibrary: true) { nodes { id title } }
+        }
+        """)
+        nodes = data.get("data", {}).get("mangas", {}).get("nodes", [])
+
+        count = 0
+        for m in nodes:
+            await self._post("""
+            mutation RemoveFromLibrary($input: UpdateMangaInput!) {
+              updateManga(input: $input) { clientMutationId }
+            }
+            """, {
+                "input": {
+                    "clientMutationId": f"clear-{m['id']}",
+                    "id": m["id"],
+                    "patch": {"inLibrary": False},
                 }
-                """
-                await client.post(
-                    self.url,
-                    json={
-                        "query": mutation,
-                        "variables": {
-                            "input": {
-                                "clientMutationId": f"clear-{m['id']}",
-                                "id": m["id"],
-                                "patch": {"inLibrary": False},
-                            }
-                        },
-                    },
-                    headers={"Content-Type": "application/json"},
-                )
-                count += 1
+            })
+            count += 1
 
-            log.info("Cleared %d manga from Suwayomi library", count)
-            return count
+        log.info("Cleared %d manga from Suwayomi library", count)
+        self._library_titles = None
+        self._sources = None
+        return count
 
     async def populate(
         self,
@@ -165,6 +184,9 @@ class SuwayomiPopulator:
     ) -> PopulateResult:
         """Populate Suwayomi with manga entries and bind AniList trackers.
 
+        Tries each installed source until the manga is found and added.
+        Skips entries already in the library.
+
         Args:
             entries: List of MangaEntry objects (must have anilist_media_id set).
             max_concurrent: Max concurrent GraphQL calls.
@@ -172,21 +194,44 @@ class SuwayomiPopulator:
         Returns:
             PopulateResult with counts of added/bound/skipped/failed manga.
         """
+        # Preload sources and library
+        sources = await self._get_installed_sources()
+        if not sources:
+            log.error("No usable source extensions installed in Suwayomi. "
+                      "Install sources via WebUI → Extensions.")
+            result = PopulateResult()
+            result.errors.append("No sources installed")
+            return result
+
+        library_titles = await self._get_library_titles()
         result = PopulateResult()
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def _process(entry) -> None:
             async with semaphore:
                 try:
-                    manga_id = await self._search_and_add(entry)
+                    # Skip if already in library
+                    if entry.title.lower().strip() in library_titles:
+                        log.info("Already in library: '%s'", entry.title)
+                        result.skipped += 1
+                        return
+
+                    # Skip entries without AniList IDs (can't bind tracker)
+                    if not entry.anilist_media_id:
+                        log.debug("No AniList ID for '%s' — skipping", entry.title)
+                        result.skipped += 1
+                        return
+
+                    manga_id = await self._search_and_add(entry, sources)
                     if manga_id:
                         result.added += 1
-                        if entry.anilist_media_id:
-                            ok = await self._bind_tracker(
-                                manga_id, entry.anilist_media_id
-                            )
-                            if ok:
-                                result.bound += 1
+                        library_titles.add(entry.title.lower().strip())
+                        # Bind tracker
+                        ok = await self._bind_tracker(
+                            manga_id, entry.anilist_media_id
+                        )
+                        if ok:
+                            result.bound += 1
                     else:
                         result.skipped += 1
                 except Exception as e:
@@ -199,101 +244,115 @@ class SuwayomiPopulator:
 
         log.info(
             "Suwayomi populate complete: %d added, %d bound, %d skipped, %d failed",
-            result.added,
-            result.bound,
-            result.skipped,
-            result.failed,
+            result.added, result.bound, result.skipped, result.failed,
         )
         return result
 
-    async def _search_and_add(self, entry) -> int | None:
-        """Search for a manga in source extensions and add to library.
+    async def _search_and_add(
+        self, entry, sources: list[SourceInfo]
+    ) -> int | None:
+        """Search for a manga across installed sources and add to library.
 
-        Returns Suwayomi manga ID if successful, None otherwise.
+        Tries each source in order. Returns Suwayomi manga ID or None.
         """
-        async with httpx.AsyncClient(timeout=30) as client:
-            # Step 1: Search in the manga's source
-            search_vars = {
-                "input": {
-                    "source": str(entry.source_id),
-                    "query": entry.title,
-                    "type": "SEARCH",
-                    "page": 1,
-                }
+        for source in sources:
+            manga_id = await self._try_source(entry, source)
+            if manga_id:
+                return manga_id
+
+        log.warning("No source found '%s' — tried %d sources",
+                    entry.title, len(sources))
+        return None
+
+    async def _try_source(
+        self, entry, source: SourceInfo
+    ) -> int | None:
+        """Try to find and add a manga from a specific source.
+
+        Returns Suwayomi manga ID or None.
+        """
+        # Step 1: Search the source
+        variables = {
+            "input": {
+                "source": source.id,
+                "query": entry.title,
+                "type": "SEARCH",
+                "page": 1,
             }
-            resp = await client.post(
-                self.url,
-                json={"query": FETCH_SOURCE_MANGA, "variables": search_vars},
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        }
+        data = await self._post(FETCH_SOURCE_MANGA, variables)
 
-            mangas = (
-                data.get("data", {})
-                .get("fetchSourceManga", {})
-                .get("mangas", [])
-            )
-            if not mangas:
-                log.warning("No search results for '%s' in source %d", entry.title, entry.source_id)
-                return None
+        fetch_result = data.get("data", {}).get("fetchSourceManga")
+        # Handle null response (source not found, API error, etc.)
+        if fetch_result is None:
+            log.debug("Source '%s' returned null for '%s'",
+                      source.name, entry.title)
+            return None
 
-            # Step 2: Add the best match to library
-            best_match = self._pick_best_match(entry.title, mangas)
-            if not best_match:
-                return None
+        mangas = fetch_result.get("mangas") or []
+        if not mangas:
+            log.debug("No search results for '%s' in %s",
+                      entry.title, source.name)
+            return None
 
-            source_manga_id = best_match["id"]
-            add_vars = {"input": {"id": source_manga_id}}
-            resp = await client.post(
-                self.url,
-                json={"query": FETCH_MANGA, "variables": add_vars},
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        # Step 2: Pick best match and add to library
+        best_match = self._pick_best_match(entry.title, mangas)
+        if not best_match:
+            log.debug("No good match for '%s' in %s results",
+                      entry.title, source.name)
+            return None
 
-            manga = (
-                data.get("data", {})
-                .get("fetchManga", {})
-                .get("manga", {})
-            )
-            manga_id = manga.get("id")
-            log.info("Added '%s' → Suwayomi manga ID %d", entry.title, manga_id)
-            return manga_id
+        source_manga_id = best_match["id"]
+        add_variables = {"input": {"id": source_manga_id}}
+
+        try:
+            data = await self._post(FETCH_MANGA, add_variables)
+        except Exception as e:
+            log.warning("Add failed for '%s' from %s: %s",
+                        entry.title, source.name, e)
+            return None
+
+        fetch_result = data.get("data", {}).get("fetchManga")
+        if fetch_result is None:
+            log.warning("fetchManga returned null for '%s' (source: %s)",
+                        entry.title, source.name)
+            return None
+
+        manga = fetch_result.get("manga") or {}
+        manga_id = manga.get("id")
+        if manga_id:
+            log.info("Added '%s' via %s → Suwayomi ID %d",
+                     entry.title, source.name, manga_id)
+        return manga_id
 
     async def _bind_tracker(
         self, manga_id: int, anilist_media_id: int
     ) -> bool:
         """Bind the AniList tracker to a Suwayomi manga."""
-        async with httpx.AsyncClient(timeout=15) as client:
-            vars_ = {
-                "input": {
-                    "mangaId": manga_id,
-                    "trackerId": ANILIST_TRACKER_ID,
-                    "remoteId": str(anilist_media_id),
-                }
+        variables = {
+            "input": {
+                "mangaId": manga_id,
+                "trackerId": ANILIST_TRACKER_ID,
+                "remoteId": str(anilist_media_id),
             }
-            resp = await client.post(
-                self.url,
-                json={"query": BIND_TRACK, "variables": vars_},
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            record = (
-                data.get("data", {})
-                .get("bindTrack", {})
-                .get("trackRecord", {})
-            )
-            ok = bool(record.get("id"))
-            if ok:
-                log.info(
-                    "Bound tracker: manga %d → AniList %d",
-                    manga_id,
-                    anilist_media_id,
-                )
-            return ok
+        }
+        try:
+            data = await self._post(BIND_TRACK, variables)
+        except Exception as e:
+            log.error("Tracker bind failed for manga %d: %s", manga_id, e)
+            return False
+
+        bind_result = data.get("data", {}).get("bindTrack")
+        if bind_result is None:
+            log.warning("bindTrack returned null for manga %d", manga_id)
+            return False
+
+        record = bind_result.get("trackRecord") or {}
+        ok = bool(record.get("id"))
+        if ok:
+            log.info("Bound tracker: manga %d → AniList %d",
+                     manga_id, anilist_media_id)
+        return ok
 
     @staticmethod
     def _pick_best_match(
@@ -303,7 +362,7 @@ class SuwayomiPopulator:
         title_lower = title.lower().strip()
         # Prefer exact title match
         for r in results:
-            if r.get("title", "").lower().strip() == title_lower:
+            if (r.get("title") or "").lower().strip() == title_lower:
                 return r
         # Fall back to first result
         return results[0] if results else None
