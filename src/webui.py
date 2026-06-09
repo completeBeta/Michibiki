@@ -221,7 +221,20 @@ def _find_manga_dir(manga_title: str) -> Path | None:
     except PermissionError:
         pass
 
-    # Pass 4 — two levels deep (source_id / title)
+    # Pass 4 — inside /downloads/mangas/ one level (source name / title)
+    mangas_dir = base / "mangas"
+    if mangas_dir.is_dir():
+        try:
+            for source_dir in mangas_dir.iterdir():
+                if not source_dir.is_dir():
+                    continue
+                for d in source_dir.iterdir():
+                    if d.is_dir() and d.name.lower() == sanitized_lower:
+                        return d
+        except PermissionError:
+            pass
+
+    # Pass 5 — two levels deep from /downloads/ (source_id / title)
     try:
         for source_dir in base.iterdir():
             if not source_dir.is_dir():
