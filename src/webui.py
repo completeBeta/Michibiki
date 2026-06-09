@@ -9,18 +9,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
+import re
+import tempfile
 import time
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader
+from starlette.background import BackgroundTask
 
 from src.config import load_config
 from src.bakumon import sync_from_backup
@@ -40,6 +44,7 @@ _scan_state: dict[str, Any] = {
 
 SUWAYOMI_URL = os.getenv("SUWAYOMI_URL", "http://suwayomi:4567/api/graphql")
 WEBUI_PORT = int(os.getenv("WEBUI_PORT", "5001"))
+DOWNLOADS_DIR = os.getenv("DOWNLOADS_DIR", "/downloads")
 
 # ── Download task tracker (in-memory, lost on restart) ──────────────
 
@@ -165,6 +170,143 @@ async def _get_manga_detail(manga_id: int) -> dict | None:
     }
     """, {"id": manga_id})
     return data.get("data", {}).get("manga", None)
+
+
+# ── Zip download helpers ────────────────────────────────────────────
+
+_RE_FS_ILLEGAL = re.compile(r'[<>:"/\\|?*]')
+
+
+def _sanitize_fs(name: str) -> str:
+    """Strip characters illegal in filesystem names."""
+    return _RE_FS_ILLEGAL.sub('', name).strip()
+
+
+def _find_manga_dir(manga_title: str) -> Path | None:
+    """Find the download directory for a manga by title.
+
+    Suwayomi stores downloads as:
+      /downloads/{manga_title}/{chapter_name}/
+    or sometimes:
+      /downloads/{source_id}/{manga_title}/{chapter_name}/
+
+    This searches one level deep, then two, with fuzzy matching.
+    """
+    base = Path(DOWNLOADS_DIR)
+    if not base.exists():
+        log.warning("Downloads dir %s does not exist", DOWNLOADS_DIR)
+        return None
+
+    sanitized = _sanitize_fs(manga_title)
+    sanitized_lower = sanitized.lower()
+
+    # Pass 1 — direct match at top level
+    candidate = base / sanitized
+    if candidate.is_dir():
+        return candidate
+
+    # Pass 2 — case-insensitive top-level
+    try:
+        for d in base.iterdir():
+            if d.is_dir() and d.name.lower() == sanitized_lower:
+                return d
+    except PermissionError:
+        pass
+
+    # Pass 3 — contains-match at top level (handles source-prefixed names)
+    try:
+        for d in base.iterdir():
+            if d.is_dir() and sanitized_lower in d.name.lower():
+                return d
+    except PermissionError:
+        pass
+
+    # Pass 4 — two levels deep (source_id / title)
+    try:
+        for source_dir in base.iterdir():
+            if not source_dir.is_dir():
+                continue
+            for d in source_dir.iterdir():
+                if d.is_dir() and d.name.lower() == sanitized_lower:
+                    return d
+    except PermissionError:
+        pass
+
+    return None
+
+
+def _find_chapter_dir(manga_dir: Path, chapter_name: str) -> Path | None:
+    """Find a specific chapter directory within a manga dir.
+
+    Suwayomi names chapter dirs by chapter name (e.g. "Chapter 1").
+    Falls back to fuzzy matching for edge cases.
+    """
+    sanitized = _sanitize_fs(chapter_name)
+    sanitized_lower = sanitized.lower()
+
+    # Exact match
+    candidate = manga_dir / sanitized
+    if candidate.is_dir():
+        return candidate
+
+    # Case-insensitive
+    try:
+        for d in manga_dir.iterdir():
+            if d.is_dir() and d.name.lower() == sanitized_lower:
+                return d
+    except PermissionError:
+        pass
+
+    # Contains match
+    try:
+        for d in manga_dir.iterdir():
+            if d.is_dir() and sanitized_lower in d.name.lower():
+                return d
+    except PermissionError:
+        pass
+
+    return None
+
+
+def _build_chapter_zip(
+    output_path: str,
+    chapters: list[dict],
+    manga_dir: Path,
+    manga_title: str,
+) -> tuple[int, int]:
+    """Build a zip of downloaded chapters. Runs in thread pool.
+
+    Returns (chapters_added, pages_added).
+    """
+    safe_title = _sanitize_fs(manga_title)
+    chapters_added = 0
+    pages_added = 0
+
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for ch in chapters:
+            ch_name = ch.get("name", f"Chapter {ch.get('chapterNumber', '?')}")
+            ch_num = ch.get("chapterNumber") or 0
+
+            ch_dir = _find_chapter_dir(manga_dir, ch_name)
+            if not ch_dir:
+                log.warning("Chapter dir not found: %s / %s", manga_title, ch_name)
+                continue
+
+            # Folder name inside zip: "Ch 001 - Chapter Name"
+            ch_safe = _sanitize_fs(ch_name)
+            zip_prefix = f"Ch {float(ch_num):06.1f} - {ch_safe}" if ch_num else ch_safe
+
+            page_files = sorted(
+                [p for p in ch_dir.iterdir() if p.is_file()],
+                key=lambda p: p.name,
+            )
+            for page in page_files:
+                zf.write(str(page), f"{zip_prefix}/{page.name}")
+                pages_added += 1
+
+            chapters_added += 1
+
+    return chapters_added, pages_added
 
 
 # ── Background download runner ──────────────────────────────────────
@@ -378,7 +520,6 @@ def _run_populator_sync(backup_path: str) -> None:
         _scan_state["running"] = False
 
 
-
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
     """Main page — library list with search."""
@@ -398,7 +539,6 @@ async def library_view(request: Request):
             "tasks": plain_tasks,
         },
     )
-
 
 
 @app.post("/api/clear")
@@ -510,6 +650,111 @@ async def tasks_view(request: Request):
     return _render(
         "tasks.html",
         {"request": request, "tasks": plain_tasks},
+    )
+
+
+@app.get("/manga/{manga_id}/download")
+async def download_manga_zip(request: Request, manga_id: int):
+    """Stream a zip of all downloaded chapters for a manga.
+
+    Chapters are organized as folders inside the zip:
+        Manga Title.zip
+        ├── Ch 001 - Chapter Name/
+        │   ├── 001.jpg
+        │   └── ...
+        └── Ch 002 - Chapter Name/
+            └── ...
+
+    Zip is built in a thread pool (non-blocking), streamed via FileResponse,
+    and cleaned up automatically after the response completes.
+    """
+    # 1. Get manga metadata from Suwayomi
+    try:
+        manga = await _get_manga_detail(manga_id)
+    except Exception as e:
+        log.error("Failed to fetch manga %d: %s", manga_id, e)
+        return HTMLResponse(
+            f'<p class="toast error">Error fetching manga: {e}</p>',
+            status_code=500,
+        )
+
+    if not manga:
+        return HTMLResponse(
+            '<p class="toast error">Manga not found</p>',
+            status_code=404,
+        )
+
+    title = manga["title"]
+    chapters = manga.get("chapters", {}).get("nodes", [])
+    downloaded = [c for c in chapters if c.get("isDownloaded")]
+
+    if not downloaded:
+        return HTMLResponse(
+            f'<p class="toast warn">No downloaded chapters for <strong>{title}</strong>. '
+            f'<a href="/manga/{manga_id}">Download some first</a>.</p>',
+            status_code=404,
+        )
+
+    # 2. Find the manga's download directory on the filesystem
+    manga_dir = _find_manga_dir(title)
+    if not manga_dir:
+        # Debug: list what directories exist
+        base = Path(DOWNLOADS_DIR)
+        dirs = (
+            [d.name for d in sorted(base.iterdir()) if d.is_dir()][:20]
+            if base.exists()
+            else []
+        )
+        log.warning(
+            "Manga dir not found for '%s'. Top-level dirs: %s",
+            title, dirs,
+        )
+        return HTMLResponse(
+            f'<p class="toast error">Download directory not found for '
+            f'<strong>{title}</strong>. Is the downloads volume mounted?</p>',
+            status_code=404,
+        )
+
+    # 3. Build zip in thread pool (non-blocking)
+    tmp_path = tempfile.mktemp(suffix=".zip")
+    safe_title = _sanitize_fs(title)
+
+    try:
+        chapters_added, pages_added = await asyncio.to_thread(
+            _build_chapter_zip,
+            tmp_path, downloaded, manga_dir, title,
+        )
+    except Exception as e:
+        log.exception("Zip build failed for %s", title)
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        return HTMLResponse(
+            f'<p class="toast error">Failed to build zip: {e}</p>',
+            status_code=500,
+        )
+
+    if chapters_added == 0:
+        os.unlink(tmp_path)
+        return HTMLResponse(
+            f'<p class="toast warn">Could not locate chapter files for '
+            f'<strong>{title}</strong>. {len(downloaded)} chapters marked downloaded '
+            f'but none found on disk at <code>{manga_dir}</code>.</p>',
+            status_code=404,
+        )
+
+    zip_size_mb = os.path.getsize(tmp_path) / (1024 * 1024)
+    log.info(
+        "Serving zip for '%s': %d chapters, %d pages, %.1f MB",
+        title, chapters_added, pages_added, zip_size_mb,
+    )
+
+    return FileResponse(
+        tmp_path,
+        media_type="application/zip",
+        filename=f"{safe_title}.zip",
+        background=BackgroundTask(lambda p=tmp_path: os.unlink(p) if os.path.exists(p) else None),
     )
 
 
