@@ -62,7 +62,9 @@
     .flash-info { background: #1f3a5f; border: 1px solid #388bfd; color: var(--accent); }
     .flash-success { background: #1a3a1a; border: 1px solid var(--green); color: var(--green); }
     .flash-error { background: #3a1a1a; border: 1px solid var(--red); color: var(--red); }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .spinner { width: 14px; height: 14px; border: 2px solid var(--muted); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .htmx-indicator { display: none; }
+  .htmx-request .htmx-indicator { display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .progress-bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.5rem; overflow: hidden; }
