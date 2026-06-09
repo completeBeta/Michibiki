@@ -107,11 +107,19 @@
   </label>
   <label title="Preview without downloading"><input type="checkbox" name="dry_run" value="true"> Dry Run</label>
   <button type="submit" class="btn btn-primary" id="download-btn">Download</button>
-  <a href="/manga/{{ manga.id }}/download" class="btn" style="text-decoration:none">📦 Download Zip</a>
+  <a href="/manga/{{ manga.id }}/download" class="btn" style="text-decoration:none"
+   onclick="document.getElementById('flash').innerHTML='<div class=\'flash flash-info\'><span class=\'spinner\'></span> Preparing zip — this may take a minute for large libraries...</div>'; return true;">📦 Download Zip</a>
   <span id="download-spinner" class="htmx-indicator spinner"></span>
 </form>
+<script>
+  // Force-hide stuck spinner if HTMX fails to clean up
+  document.body.addEventListener('htmx:afterRequest', function(evt) {
+    var spinner = document.getElementById('download-spinner');
+    if (spinner) spinner.style.display = 'none';
+  });
+</script>
 
-<div id="flash"></div>
+<div id="flash" hx-on::after-settle="if(!this.querySelector('.flash-info')) this.removeAttribute('hx-on')"></div>
 
 <h2>Chapters</h2>
 <div class="chapter-grid">
