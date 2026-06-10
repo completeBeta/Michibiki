@@ -121,16 +121,20 @@ def _extract_manga_entry(manga) -> MangaEntry:
             last_read = float(max(ch.chapterNumber for ch in read_chapters))
 
     # Detect volume-based manga: Mihon stores volumes as volume/10000.
-    # If all chapters have sub-1 numbers, scale to actual volume count.
+    # Check if last_read is plausibly a volume value (near n/10000 for integer n)
+    # rather than checking first-N chapters, which breaks when chapters and
+    # volume entries are intermixed (common in long-running series).
     volume_based = False
     if last_read > 0 and last_read < 1.0:
-        # Confirm it's volume-based by checking sample chapters
-        sample = [ch.chapterNumber for ch in manga.chapters[:5]]
-        if all(0 < n < 1 for n in sample if n > 0):
-            original = last_read
-            last_read = round(last_read * 10000)
-            volume_based = True
-            log.info("Volume-based manga '%s': scaled %.6f → %d", manga.title, original, last_read)
+        # Only apply volume detection when progress came from read chapters,
+        # not from a tracker (tracker values are already in correct units).
+        if tracker_last_read == 0.0:
+            scaled = last_read * 10000
+            if abs(round(scaled) - scaled) < 0.1:
+                original = last_read
+                last_read = round(scaled)
+                volume_based = True
+                log.info("Volume-based manga '%s': scaled %.6f -> %d", manga.title, original, last_read)
 
     return MangaEntry(
         title=manga.title,
