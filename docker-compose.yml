@@ -9,7 +9,7 @@ services:
       - SUWAYOMI_URL=http://suwayomi:4567/api/graphql
       - SUWAYOMI_WS_URL=ws://suwayomi:4567/api/graphql
       - ANILIST_TOKEN=***
-      - POLL_INTERVAL_SECONDS=86400
+      - POLL_INTERVAL_SECONDS=43200
       - DRY_RUN=${DRY_RUN:-true}
       - BACKUP_DIR=/app/backups
       - DOWNLOADS_DIR=/downloads

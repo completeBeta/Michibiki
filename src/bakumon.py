@@ -133,6 +133,8 @@ async def sync_from_backup(
             except Exception as e:
                 log.error("AniList sync failed for '%s': %s", entry.title, e)
                 errors.append(f"{entry.title}: {e}")
+            # Rate-limit between progress updates: 500ms gap
+            await asyncio.sleep(0.5)
 
     log.info("Synced %d manga to AniList", synced)
 

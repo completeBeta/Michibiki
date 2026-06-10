@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from .anilist import retry_with_backoff
+
 log = logging.getLogger(__name__)
 
 ANILIST_API = "https://graphql.anilist.co"
@@ -189,9 +191,13 @@ async def search_anilist(
             "query": SEARCH_QUERY,
             "variables": {"search": term, "page": 1},
         }
-        resp = await client.post(ANILIST_API, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
+
+        async def _call():
+            resp = await client.post(ANILIST_API, json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+
+        data = await retry_with_backoff(_call)
         page = data.get("data", {}).get("Page", {})
         return page.get("media", []) or []
 

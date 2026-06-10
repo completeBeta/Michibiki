@@ -1,9 +1,13 @@
 """AniList GraphQL client — pushes reading progress updates."""
 
+import asyncio
+import logging
 import math
 from enum import Enum
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 ANILIST_API = "https://graphql.anilist.co"
 
@@ -30,6 +34,34 @@ mutation ($mediaId: Int, $progressVolumes: Int, $status: MediaListStatus) {
   }
 }
 """
+
+
+async def retry_with_backoff(
+    fn,
+    *args,
+    max_retries: int = 5,
+    base_delay: float = 2.0,
+    max_delay: float = 60.0,
+    **kwargs,
+):
+    """Call an async function with exponential backoff on HTTP 429 errors.
+
+    Delays: 2s, 4s, 8s, 16s, 32s (capped at 60s).
+    Non-429 exceptions are re-raised immediately.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt < max_retries:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                log.warning(
+                    "AniList rate limited (429) — retrying in %.0fs (attempt %d/%d)",
+                    delay, attempt + 1, max_retries,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
 
 
 class MediaListStatus(str, Enum):
@@ -86,13 +118,17 @@ class AniListClient:
 
         payload = self._build_save_mutation(media_id, progress, status, is_volume_based)
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                ANILIST_API,
-                json=payload,
-                headers=self.headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
+
+            async def _call():
+                resp = await client.post(
+                    ANILIST_API,
+                    json=payload,
+                    headers=self.headers,
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+            return await retry_with_backoff(_call)
 
     def _build_save_mutation(
         self,
