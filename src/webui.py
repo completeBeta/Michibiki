@@ -777,12 +777,14 @@ OVERRIDES_PATH = Path("/app/data/title_overrides.json")
 
 
 def _read_overrides() -> dict:
-    """Read the title overrides JSON file."""
+    """Read the title overrides JSON file, returning only int-valued entries."""
     if not OVERRIDES_PATH.exists():
         return {}
     import json
     with open(OVERRIDES_PATH) as f:
-        return json.load(f)
+        data = json.load(f)
+    # Filter out comment/metadata keys — only keep int-valued overrides
+    return {k: int(v) for k, v in data.items() if isinstance(v, (int, float))}
 
 
 def _write_overrides(data: dict) -> None:
