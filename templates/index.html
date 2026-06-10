@@ -289,12 +289,55 @@
     .toast { padding: 0.75rem 1rem; border-radius: var(--radius); margin-top: 1rem; font-size: 0.9rem; }
     .toast.success { background: #1a3a1a; border: 1px solid var(--green); color: var(--green); }
     .toast.error { background: #3a1a1a; border: 1px solid var(--red); color: var(--red); }
-    .toast.warn { background: #3a3a1a; border: 1px solid var(--orange); color: var(--orange); }
+    /* Nav */
+    .top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-links {
+      display: flex;
+      gap: 0.25rem;
+    }
+    .nav-link {
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .nav-link:hover {
+      background: var(--surface);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .nav-link.active {
+      background: var(--surface);
+      color: var(--accent);
+    }
 
   </style>
 </head>
 <body>
-  <h1>📚 Michibiki</h1>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">📚 Michibiki</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Library</a>
+      <a href="/overrides" class="nav-link">🏷️ Overrides</a>
+    </div>
+  </nav>
 
   {% if library_empty %}
             <div class="toolbar" style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem;">
