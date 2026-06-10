@@ -45,6 +45,10 @@ async def sync_from_backup(
         Dict with sync summary.
     """
     from .suwayomi_populator import SuwayomiPopulator
+    from .anilist_search import reload_overrides
+
+    # 0. Reload title overrides from disk (WebUI may have changed them)
+    reload_overrides()
 
     # 1. Parse backup
     log.info("Parsing backup: %s", backup_path)
@@ -107,8 +111,8 @@ async def sync_from_backup(
     for entry in entries:
         if not entry.anilist_media_id:
             continue
-        if entry.last_chapter_read <= 0:
-            log.info("Skipping '%s': no chapters read (progress=0)", entry.title)
+        if anilist.round_progress(entry.last_chapter_read) <= 0:
+            log.info("Skipping '%s': no chapters read (progress=%s)", entry.title, entry.last_chapter_read)
             continue
 
         if dry_run:

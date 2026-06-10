@@ -95,8 +95,15 @@ class AniListClient:
 
     @staticmethod
     def round_progress(chapter: float | None) -> int:
-        """Floor chapter number to int (42.5 → 42, None → 0)."""
+        """Floor chapter number to int (42.5 → 42, None → 0).
+
+        Values below 0.5 are treated as 0 — this catches floating-point
+        artifacts like 9.999999747378752e-05 (~0.0001) that Mihon sometimes
+        stores instead of clean 0 for unread chapters.
+        """
         if chapter is None:
+            return 0
+        if chapter < 0.5:
             return 0
         return math.floor(chapter)
 
