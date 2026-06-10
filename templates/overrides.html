@@ -153,6 +153,45 @@
     .toast.warn { background: #3a3a1a; border: 1px solid var(--orange); color: var(--orange); }
     .toast.info { background: #1f3a5f; border: 1px solid var(--accent); color: var(--accent); }
 
+    /* Nav */
+    .top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-brand {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-links {
+      display: flex;
+      gap: 0.25rem;
+    }
+    .nav-link {
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+    .nav-link:hover {
+      background: var(--surface);
+      color: var(--text);
+      text-decoration: none;
+    }
+    .nav-link.active {
+      background: var(--surface);
+      color: var(--accent);
+    }
+
     .empty-state {
       text-align: center;
       padding: 2rem 1rem;
@@ -200,10 +239,16 @@
   </style>
 </head>
 <body>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">📚 Michibiki</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Library</a>
+      <a href="/overrides" class="nav-link active">🏷️ Overrides</a>
+    </div>
+  </nav>
+
   <h1>🏷️ Title Overrides</h1>
   <p class="subtitle">Force specific AniList IDs for titles that search gets wrong (e.g., spinoffs vs main series). Changes apply on next sync — no restart needed.</p>
-
-  <a href="/" class="back-link">← Back to Library</a>
 
   <!-- Existing overrides -->
   <h2>Current Overrides ({{ count }})</h2>
@@ -268,7 +313,7 @@
   <div id="status"></div>
 
   <footer>
-    Michibiki WebUI &middot; <a href="/">Library</a> &middot; <a href="/overrides">Overrides</a>
+    Michibiki WebUI &middot; <a href="/">Library</a>
   </footer>
 </body>
 </html>
