@@ -771,6 +771,158 @@ async def download_manga_zip(request: Request, manga_id: int):
     )
 
 
+# ── Title Override Management ───────────────────────────────────────
+
+OVERRIDES_PATH = Path("/app/data/title_overrides.json")
+
+
+def _read_overrides() -> dict:
+    """Read the title overrides JSON file."""
+    if not OVERRIDES_PATH.exists():
+        return {}
+    import json
+    with open(OVERRIDES_PATH) as f:
+        return json.load(f)
+
+
+def _write_overrides(data: dict) -> None:
+    """Write the title overrides JSON file."""
+    import json
+    OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OVERRIDES_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+@app.get("/overrides", response_class=HTMLResponse)
+async def overrides_page(request: Request):
+    """Title overrides management page."""
+    overrides = _read_overrides()
+    return _render("overrides.html", {
+        "request": request,
+        "overrides": overrides,
+        "count": len(overrides),
+    })
+
+
+@app.post("/overrides/add")
+async def add_override(
+    request: Request,
+    title: str = Form(...),
+    anilist_id: int = Form(...),
+):
+    """Add a new title override."""
+    if not title.strip():
+        return HTMLResponse(
+            '<div class="toast error">Title is required.</div>',
+            status_code=400,
+        )
+    overrides = _read_overrides()
+    key = title.strip().lower()
+    overrides[key] = anilist_id
+    _write_overrides(overrides)
+    log.info("Added title override: '%s' -> ID %d", title.strip(), anilist_id)
+    return HTMLResponse(
+        '<div class="toast success">'
+        f'Added override: <strong>{title.strip()}</strong> -> ID {anilist_id}. '
+        'Changes apply on next sync (no restart needed). '
+        '<a href="/overrides">Refresh</a>'
+        '</div>'
+    )
+
+
+@app.post("/overrides/delete")
+async def delete_override(
+    request: Request,
+    key: str = Form(...),
+):
+    """Delete a title override by its simplified key."""
+    overrides = _read_overrides()
+    if key not in overrides:
+        return HTMLResponse(
+            '<div class="toast error">Override not found.</div>',
+            status_code=404,
+        )
+    removed_id = overrides.pop(key)
+    _write_overrides(overrides)
+    log.info("Removed title override: '%s' (was ID %d)", key, removed_id)
+    return HTMLResponse(
+        '<div class="toast success">'
+        f'Removed override: <strong>{key}</strong> (was ID {removed_id}). '
+        '<a href="/overrides">Refresh</a>'
+        '</div>'
+    )
+
+
+@app.get("/api/anilist/search")
+async def anilist_search_webui(request: Request, q: str = ""):
+    """Search AniList for manga IDs matching a title. Used by overrides page."""
+    if not q.strip():
+        return HTMLResponse('<div class="toast warn">Enter a title to search.</div>')
+    token = os.getenv("ANILIST_TOKEN")
+    if not token:
+        return HTMLResponse('<div class="toast error">ANILIST_TOKEN not set.</div>', status_code=500)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://graphql.anilist.co",
+                json={
+                    "query": """
+                    query($search: String) {
+                      Page(page: 1, perPage: 10) {
+                        media(search: $search, type: MANGA, format_not_in: [NOVEL]) {
+                          id
+                          title { romaji english }
+                          format
+                          status
+                          chapters
+                          volumes
+                        }
+                      }
+                    }
+                    """,
+                    "variables": {"search": q.strip()},
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("data", {}).get("Page", {}).get("media", []) or []
+    except Exception as e:
+        log.error("AniList search from WebUI failed: %s", e)
+        return HTMLResponse(
+            f'<div class="toast error">Search failed: {e}</div>',
+            status_code=500,
+        )
+
+    if not results:
+        return HTMLResponse('<div class="toast warn">No results found.</div>')
+
+    rows = []
+    for r in results:
+        title = r.get("title", {}).get("romaji") or r.get("title", {}).get("english") or "?"
+        fmt = r.get("format", "?")
+        ch = r.get("chapters") or "?"
+        vol = r.get("volumes") or "?"
+        escaped_title = title.replace("'", "\\'")
+        rows.append(
+            '<div class="search-result">'
+            f'<span class="result-title">{title}</span>'
+            f'<span class="result-meta">{fmt} | ch:{ch} vol:{vol}</span>'
+            f'<button class="btn btn-sm" onclick="'
+            f"document.getElementById('override-id').value={r['id']};"
+            f"document.getElementById('override-title').value='{escaped_title}'"
+            f'">Use ID {r["id"]}</button>'
+            '</div>'
+        )
+    return HTMLResponse(
+        f'<div class="search-results">{"".join(rows)}</div>'
+    )
+
+
 # ── CLI entrypoint ──────────────────────────────────────────────────
 
 def main():

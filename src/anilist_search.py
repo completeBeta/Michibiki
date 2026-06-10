@@ -74,6 +74,18 @@ def _load_overrides() -> dict[str, int]:
 
 TITLE_OVERRIDES: dict[str, int] = _load_overrides()
 
+
+def reload_overrides() -> dict[str, int]:
+    """Re-read title_overrides.json and update the global TITLE_OVERRIDES.
+
+    Call this before each sync cycle so WebUI changes take effect
+    without a container restart. Returns the new overrides dict.
+    """
+    global TITLE_OVERRIDES
+    TITLE_OVERRIDES = _load_overrides()
+    log.debug("Reloaded title overrides: %d entries", len(TITLE_OVERRIDES))
+    return TITLE_OVERRIDES
+
 # Common subtitle patterns to strip for better search matching
 _SUBTITLE_PATTERNS = [
     "Part ", "Season ", "Arc", "Side Story", "Special",
