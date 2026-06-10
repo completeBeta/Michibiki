@@ -111,7 +111,7 @@ async def sync_from_backup(
     for entry in entries:
         if not entry.anilist_media_id:
             continue
-        if anilist.round_progress(entry.last_chapter_read) <= 0:
+        if entry.last_chapter_read <= 0:
             log.info("Skipping '%s': no chapters read (progress=%s)", entry.title, entry.last_chapter_read)
             continue
 
