@@ -24,7 +24,7 @@ def test_load_config_defaults(monkeypatch):
 
     config = load_config()
 
-    assert config.poll_interval_seconds == 86400
+    assert config.poll_interval_seconds == 43200
     assert config.dry_run is False
 
 
