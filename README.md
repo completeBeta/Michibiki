@@ -133,14 +133,21 @@ The path must exist on the host before running `docker compose up`. Docker overl
 
 ### Title overrides
 
-Some manga titles confuse AniList's search ranking — popular series often match spinoffs instead of the main series. Edit `data/title_overrides.json` to force the correct AniList media ID. Keys are lowercase, case-insensitive. Restart the container after editing (no rebuild needed):
+Some manga titles confuse AniList's search ranking — popular series often match spinoffs instead of the main series. You can manage overrides two ways:
+
+**WebUI (recommended):** Open `http://<server>:5001` → **Overrides** tab. Add a title and AniList media ID — changes apply on the next sync cycle, no container restart needed.
+
+**Manual (JSON):** Edit `data/title_overrides.json` directly:
 
 ```json
 {
-    "_comment": "Map backup titles to AniList media IDs.",
     "classroom of the elite": 96798
 }
 ```
+
+Keys are lowercase, case-insensitive. Restart the container after editing (no rebuild needed).
+
+Find the correct AniList media ID from the URL: `anilist.co/manga/96798` → ID is `96798`.
 
 ## WebUI
 
