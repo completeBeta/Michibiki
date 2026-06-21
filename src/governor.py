@@ -100,11 +100,6 @@ class Governor:
             # If queue is empty and we still have remaining, they either completed
             # (fell off queue) or were never queued (already downloaded / rejected).
             # Log what's happening for debugging.
-            if not queue:
-                log.debug(
-                    "Queue empty, %d chapters unaccounted (%d in queue)",
-                    len(remaining), len(queue_ids),
-                )
             queue_ids = set()
             for item in queue:
                 ch = item.get("chapter")

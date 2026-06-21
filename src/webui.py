@@ -395,12 +395,11 @@ async def _run_download(
                 for i, batch in enumerate(batches, 1):
                     await _queue_batch(client, batch)
                     task.queued += len(batch)
-                    if i < len(batches):
-                        if task.status == "cancelled":
-                            return
-                        done, failed = await governor.wait_for_batch(
-                            batch, timeout_per_chapter=max(delay, len(batch) * 60)
-                        )
+                    if task.status == "cancelled":
+                        return
+                    done, failed = await governor.wait_for_batch(
+                        batch, timeout_per_chapter=max(delay, len(batch) * 60)
+                    )
             finally:
                 await governor.disconnect()
 
