@@ -28,7 +28,7 @@ from starlette.background import BackgroundTask
 
 from src.config import load_config
 from src.bakumon import sync_from_backup
-from src.cleanup import delete_manga_downloads, run_cleanup_daily
+from src.cleanup import delete_manga_downloads, run_cleanup_daily, convert_chapters_to_cbz
 from src.download import (
     _find_manga,
     _get_chapters,
@@ -310,12 +310,35 @@ def _build_chapter_zip(
 
             ch_dir = _find_chapter_dir(manga_dir, ch_name)
             if not ch_dir:
+                # Fallback: look for a .cbz file matching the chapter
+                cbz_patterns = [
+                    f"Ch {int(ch_num):04d} - {ch_name}.cbz" if ch_num and ch_num == int(ch_num) else None,
+                    f"Ch {float(ch_num):05.1f} - {ch_name}.cbz" if ch_num and ch_num != int(ch_num) else None,
+                    f"*{_sanitize_fs(ch_name)}*.cbz",
+                ]
+                cbz_found = None
+                for pat in cbz_patterns:
+                    if pat:
+                        matches = list(manga_dir.glob(pat))
+                        if matches:
+                            cbz_found = matches[0]
+                            break
+                if cbz_found:
+                    # Include the CBZ file directly in the zip
+                    zf.write(str(cbz_found), cbz_found.name)
+                    chapters_added += 1
+                    continue
                 log.warning("Chapter dir not found: %s / %s", manga_title, ch_name)
                 continue
 
-            # Folder name inside zip: "Ch 001 - Chapter Name"
+            # Folder name inside zip: "Ch 074 - Chapter Name" (no trailing .0)
             ch_safe = _sanitize_fs(ch_name)
-            zip_prefix = f"Ch {float(ch_num):06.1f} - {ch_safe}" if ch_num else ch_safe
+            if ch_num and ch_num == int(ch_num):
+                zip_prefix = f"Ch {int(ch_num):04d} - {ch_safe}"
+            elif ch_num:
+                zip_prefix = f"Ch {float(ch_num):05.1f} - {ch_safe}"
+            else:
+                zip_prefix = ch_safe
 
             page_files = sorted(
                 [p for p in ch_dir.iterdir() if p.is_file()],
@@ -396,6 +419,8 @@ async def _run_download(
             ]
 
             task.total_chapters = len(chapter_ids)
+            # Build chapter lookup for CBZ conversion
+            chapter_lookup = {c["id"]: c for c in chapters}
             governor = Governor()
             try:
                 # Connect BEFORE queueing — governor must be alive when downloads start
@@ -408,6 +433,18 @@ async def _run_download(
                     done, failed = await governor.wait_for_batch(
                         batch, timeout_per_chapter=max(delay, len(batch) * 60)
                     )
+                    # Convert finished chapters to CBZ and delete folders
+                    if done:
+                        manga_dir = _find_manga_dir(task.manga_title)
+                        if manga_dir:
+                            cbz_count = convert_chapters_to_cbz(
+                                manga_dir, done, chapter_lookup
+                            )
+                            if cbz_count:
+                                log.info(
+                                    "Converted %d chapters to CBZ for '%s'",
+                                    cbz_count, task.manga_title,
+                                )
             finally:
                 await governor.disconnect()
 
