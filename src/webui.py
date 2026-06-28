@@ -28,6 +28,7 @@ from starlette.background import BackgroundTask
 
 from src.config import load_config
 from src.bakumon import sync_from_backup
+from src.cleanup import delete_manga_downloads, run_cleanup_daily
 from src.download import (
     _find_manga,
     _get_chapters,
@@ -75,7 +76,14 @@ def _render(name: str, context: dict) -> HTMLResponse:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("WebUI starting on port %d", WEBUI_PORT)
+    # Start auto-cleanup background task (14-day TTL)
+    cleanup_task = asyncio.create_task(run_cleanup_daily())
     yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(
@@ -767,6 +775,73 @@ async def download_manga_zip(request: Request, manga_id: int):
         media_type="application/zip",
         filename=f"{safe_title}.zip",
         background=BackgroundTask(lambda p=tmp_path: os.unlink(p) if os.path.exists(p) else None),
+    )
+
+
+@app.post("/manga/{manga_id}/delete")
+async def delete_downloaded(
+    request: Request,
+    manga_id: int,
+    chapter_ids: str = Form(""),
+):
+    """Delete downloaded chapters for a manga.
+
+    Accepts comma-separated chapter IDs or 'all' to delete everything.
+    Returns HTMX fragment that refreshes the chapter grid.
+    """
+    try:
+        manga = await _get_manga_detail(manga_id)
+    except Exception as e:
+        log.error("Failed to fetch manga %d: %s", manga_id, e)
+        return HTMLResponse(
+            '<div class="toast error">Error fetching manga</div>',
+            status_code=500,
+        )
+
+    if not manga:
+        return HTMLResponse(
+            '<div class="toast error">Manga not found</div>',
+            status_code=404,
+        )
+
+    title = manga["title"]
+    chapters = manga.get("chapters", {}).get("nodes", [])
+
+    if chapter_ids == "all":
+        # Delete all downloaded chapter dirs
+        target_chapters = [c for c in chapters if c.get("isDownloaded")]
+    else:
+        ids = set(int(x.strip()) for x in chapter_ids.split(",") if x.strip().isdigit())
+        target_chapters = [c for c in chapters if c["id"] in ids]
+
+    if not target_chapters:
+        return HTMLResponse(
+            f'<div class="toast warn">No downloaded chapters to delete for <strong>{title}</strong>.</div>',
+        )
+
+    # Find manga dir on filesystem
+    manga_dir = _find_manga_dir(title)
+    if not manga_dir:
+        return HTMLResponse(
+            f'<div class="toast error">Download directory not found for <strong>{title}</strong>.</div>',
+            status_code=404,
+        )
+
+    # Delete chapter dirs
+    chapter_names = [c["name"] for c in target_chapters]
+    deleted = delete_manga_downloads(manga_dir, chapter_names)
+
+    log.info(
+        "Deleted %d/%d chapters for '%s' (manga_id=%d)",
+        deleted, len(target_chapters), title, manga_id,
+    )
+
+    return HTMLResponse(
+        f'<div class="toast success" hx-swap-oob="true" id="flash">'
+        f'Deleted {deleted} chapter(s) for <strong>{title}</strong>. '
+        f'<a href="/manga/{manga_id}">Refresh</a>'
+        f'</div>'
+        f'<script>setTimeout(function(){{window.location.reload()}},1200);</script>'
     )
 
 
