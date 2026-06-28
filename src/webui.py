@@ -312,8 +312,8 @@ def _build_chapter_zip(
             if not ch_dir:
                 # Fallback: look for a .cbz file matching the chapter
                 cbz_patterns = [
-                    f"Ch {int(ch_num):04d} - {ch_name}.cbz" if ch_num and ch_num == int(ch_num) else None,
-                    f"Ch {float(ch_num):05.1f} - {ch_name}.cbz" if ch_num and ch_num != int(ch_num) else None,
+                    f"Ch {int(ch_num)} - {ch_name}.cbz" if ch_num and ch_num == int(ch_num) else None,
+                    f"Ch {float(ch_num):.1f} - {ch_name}.cbz" if ch_num and ch_num != int(ch_num) else None,
                     f"*{_sanitize_fs(ch_name)}*.cbz",
                 ]
                 cbz_found = None
@@ -331,12 +331,12 @@ def _build_chapter_zip(
                 log.warning("Chapter dir not found: %s / %s", manga_title, ch_name)
                 continue
 
-            # Folder name inside zip: "Ch 074 - Chapter Name" (no trailing .0)
+            # Folder name inside zip: "Ch 74 - Chapter Name"
             ch_safe = _sanitize_fs(ch_name)
             if ch_num and ch_num == int(ch_num):
-                zip_prefix = f"Ch {int(ch_num):04d} - {ch_safe}"
+                zip_prefix = f"Ch {int(ch_num)} - {ch_safe}"
             elif ch_num:
-                zip_prefix = f"Ch {float(ch_num):05.1f} - {ch_safe}"
+                zip_prefix = f"Ch {float(ch_num):.1f} - {ch_safe}"
             else:
                 zip_prefix = ch_safe
 

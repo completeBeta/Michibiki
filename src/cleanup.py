@@ -108,9 +108,9 @@ def convert_chapters_to_cbz(
 
         # Build clean CBZ name
         if ch_num == int(ch_num):
-            cbz_name = f"Ch {int(ch_num):04d} - {ch_name}"
+            cbz_name = f"Ch {int(ch_num)} - {ch_name}"
         else:
-            cbz_name = f"Ch {float(ch_num):05.1f} - {ch_name}"
+            cbz_name = f"Ch {float(ch_num):.1f} - {ch_name}"
 
         # Convert to CBZ
         cbz_path = convert_folder_to_cbz(chapter_dir, manga_dir, cbz_name)
