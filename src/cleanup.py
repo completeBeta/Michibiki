@@ -122,6 +122,56 @@ def convert_chapters_to_cbz(
     return converted
 
 
+def convert_orphan_folders(manga_dir: Path) -> int:
+    """Convert any remaining chapter folders that don't have matching CBZ files.
+
+    Called after batch downloads complete to catch chapters missed by the
+    per-batch convert_chapters_to_cbz (governor tracking gaps, restarts, etc.).
+
+    Returns number of chapters converted.
+    """
+    if not manga_dir.is_dir():
+        return 0
+
+    image_exts = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'}
+
+    # Find all CBZ filenames (for matching)
+    cbz_names = {p.stem.lower() for p in manga_dir.glob("*.cbz")}
+
+    converted = 0
+    for entry in sorted(manga_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        # Quick check: does it contain images?
+        images = [p for p in entry.iterdir()
+                  if p.is_file() and p.suffix.lower() in image_exts]
+        if not images:
+            continue
+        # Already have a matching CBZ?
+        folder_lower = entry.name.lower()
+        if any(folder_lower in cbz for cbz in cbz_names):
+            continue
+
+        # Extract chapter number from folder name (e.g., "Chapter 48" → 48)
+        import re
+        ch_num_match = re.search(r'(\d+(?:\.\d+)?)', entry.name)
+        ch_num = float(ch_num_match.group(1)) if ch_num_match else 0
+
+        if ch_num == int(ch_num):
+            cbz_name = f"Ch {int(ch_num)} - {entry.name}"
+        else:
+            cbz_name = f"Ch {ch_num} - {entry.name}"
+
+        cbz_path = convert_folder_to_cbz(entry, manga_dir, cbz_name)
+        if cbz_path:
+            delete_chapter_dir(entry)
+            converted += 1
+
+    if converted:
+        log.info("Orphan sweep: converted %d folders to CBZ in %s", converted, manga_dir.name)
+    return converted
+
+
 def delete_manga_downloads(manga_dir: Path, chapter_names: list[str] | None = None) -> int:
     """Delete downloaded chapter directories or CBZ files for a manga.
 
@@ -195,6 +245,9 @@ async def run_cleanup_daily() -> None:
                 for manga_dir in source_dir.iterdir():
                     if not manga_dir.is_dir():
                         continue
+                    # Convert any orphaned chapter folders to CBZ
+                    # (missed by per-batch conversion due to governor gaps, restarts, etc.)
+                    convert_orphan_folders(manga_dir)
                     for chapter_dir in sorted(manga_dir.iterdir()):
                         if not chapter_dir.is_dir():
                             continue
@@ -233,6 +286,8 @@ async def run_cleanup_daily() -> None:
             for manga_dir in top.iterdir():
                 if not manga_dir.is_dir():
                     continue
+                # Convert any orphaned chapter folders to CBZ
+                convert_orphan_folders(manga_dir)
                 for chapter_dir in sorted(manga_dir.iterdir()):
                     if not chapter_dir.is_dir():
                         continue

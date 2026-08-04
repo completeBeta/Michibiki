@@ -28,7 +28,7 @@ from starlette.background import BackgroundTask
 
 from src.config import load_config
 from src.bakumon import sync_from_backup
-from src.cleanup import delete_manga_downloads, run_cleanup_daily, convert_chapters_to_cbz
+from src.cleanup import delete_manga_downloads, run_cleanup_daily, convert_chapters_to_cbz, convert_orphan_folders
 from src.download import (
     _find_manga,
     _get_chapters,
@@ -447,6 +447,19 @@ async def _run_download(
                                 )
             finally:
                 await governor.disconnect()
+
+            # Post-download orphan sweep: convert any remaining
+            # chapter folders that don't have matching CBZ files.
+            # Catches chapters missed by per-batch CBZ conversion
+            # (governor polling gaps, container restarts, etc.).
+            manga_dir = _find_manga_dir(task.manga_title)
+            if manga_dir:
+                orphan_count = convert_orphan_folders(manga_dir)
+                if orphan_count:
+                    log.info(
+                        "Orphan sweep converted %d missed folders for '%s'",
+                        orphan_count, task.manga_title,
+                    )
 
             task.status = "done"
 
