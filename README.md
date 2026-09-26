@@ -106,7 +106,11 @@ docker compose up -d
 | `BACKUP_DIR` | `/app/backups` | Directory watched for `.tachibk` files |
 | `POPULATE_SUWAYOMI` | `false` | Add manga to Suwayomi + bind AniList trackers (requires source extensions + tracker login) |
 | `CLEAR_SUWAYOMI_FIRST` | `false` | Remove all manga from Suwayomi before populating |
-| `SUWAYOMI_DOWNLOADS_DIR` | *(auto)* | Where Suwayomi writes downloaded CBZ files. Defaults inside Suwayomi's data volume. Set to any host path (local folder, CIFS/NFS mount) to redirect downloads — e.g. `/mnt/nas/manga` |
+| `SUWAYOMI_DOWNLOADS_DIR` | `./suwayomi/data/downloads` | Where Suwayomi writes downloaded CBZ files. Set to any host path (local folder, CIFS/NFS mount) to redirect downloads — e.g. `/mnt/nas/manga` |
+| `MICHIBIKI_DATA_DIR` | `./data` | Host directory for Michibiki's SQLite state |
+| `BACKUP_HOST_DIR` | `./backups` | Host directory holding Mihon `.tachibk` backups |
+| `SUWAYOMI_DATA_DIR` | `./suwayomi/data` | Host directory for Suwayomi's library |
+| `SUWAYOMI_CONFIG_DIR` | `./suwayomi/config` | Host directory for Suwayomi's config |
 
 ## Volume Mounts
 
@@ -115,11 +119,17 @@ docker compose up -d
 | `$MICHIBIKI_DATA_DIR` | `/app/data` | SQLite state store |
 | `$BACKUP_HOST_DIR` | `/app/backups` | Mihon `.tachibk` files (Syncthing target folder) |
 | `$SUWAYOMI_DATA_DIR` | `/home/suwayomi/.local/share/Tachidesk` | Suwayomi library + extensions |
-| `$SUWAYOMI_DOWNLOADS_DIR` | `/home/suwayomi/.local/share/Tachidesk/downloads` | CBZ chapter downloads (overlays parent mount). Set in `.env` — empty = default path inside data volume |
+| `$SUWAYOMI_CONFIG_DIR` | `/home/suwayomi/.local/share/Tachidesk-config` | Suwayomi config |
+| `$SUWAYOMI_DOWNLOADS_DIR` | `/home/suwayomi/.local/share/Tachidesk/downloads` | CBZ chapter downloads (overlays parent mount). Set in `.env` — shipped default is inside Suwayomi's data dir |
 
 ### Download storage
 
 By default, Suwayomi stores downloaded CBZ files inside its data volume. To redirect downloads to a different location (local folder, network mount, etc.), set `SUWAYOMI_DOWNLOADS_DIR` in `.env`:
+
+> **Every host path in the compose files comes from `.env`** (`MICHIBIKI_DATA_DIR`, `BACKUP_HOST_DIR`,
+> `SUWAYOMI_DATA_DIR`, `SUWAYOMI_CONFIG_DIR`, `SUWAYOMI_DOWNLOADS_DIR`). They are required — compose
+> refuses to start with a clear error if one is missing, so a path can never silently move.
+> `.env.example` ships relative defaults (`./data`, `./backups`, `./suwayomi/data`, …).
 
 ```env
 # Write downloads to a local folder
